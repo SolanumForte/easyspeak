@@ -5,7 +5,8 @@
 - **Text-to-speech** — Piper provides voice feedback
 - **Mouse control** — GNOME Shell extension with Clutter virtual input
 - **Browser scroll** — JavaScript injection via qutebrowser IPC
-- **Dictation** — AT-SPI accessibility framework
+- **Dictation** — clipboard and a synthetic paste keystroke, with AT-SPI used to
+  check something is focused (and as a fallback where no clipboard tool exists)
 
 All processing happens locally. No data leaves your machine.
 

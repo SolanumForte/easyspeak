@@ -109,7 +109,7 @@ def test_media_control_with_invalid_action(mock_get_players, mock_core):
     [
         ("play", "play", "Playing."),
         ("play music", "play", "Playing."),
-        ("playing now", "play", "Playing."),
+        ("resume", "play", "Playing."),
     ],
 )
 @patch.object(media, "media_control", return_value=True)
@@ -184,8 +184,6 @@ def test_handle_next_commands(
     [
         ("previous", "previous", "Previous."),
         ("previous track", "previous", "Previous."),
-        ("back", "previous", "Previous."),
-        ("go back", "previous", "Previous."),
     ],
 )
 @patch.object(media, "media_control", return_value=True)
@@ -201,13 +199,10 @@ def test_handle_previous_commands(
 
 
 @patch.object(media, "media_control", return_value=True)
-def test_handle_play_pause_disambiguation(mock_media_control, mock_core):
-    """When handle receives a command with both play and pause then pause takes precedence."""
-    result = media.handle("play pause", mock_core)
-
-    assert result is True
-    assert mock_media_control.call_args.args == ("pause", mock_core)
-    assert mock_core.speak.call_args.args[0] == "Paused."
+def test_handle_two_verbs_is_not_a_command(mock_media_control, mock_core):
+    """When an utterance names two verbs then it is too ambiguous to act on."""
+    assert media.handle("play pause", mock_core) is None
+    assert not mock_media_control.called
 
 
 @patch.object(media, "media_control")
@@ -218,3 +213,67 @@ def test_handle_unrecognized_command(mock_media_control, mock_core):
     assert result is None
     assert not mock_media_control.called
     assert not mock_core.speak.called
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # "display" contains "play", and the old substring test answered for it --
+        # a brightness command was swallowed with a cheery "Playing."
+        "make the display brighter",
+        "turn up the display",
+        "display",
+        # "back" is browser history far more often than the previous track.
+        "back",
+        "go back",
+        # "next"/"last" belong to the browser once a noun follows them.
+        "next tab",
+        "last tab",
+        # Bare "stop" is a global control word; these belong to other plugins.
+        "stop",
+        "stop tracking",
+        "stop listening",
+    ],
+)
+@patch.object(media, "media_control")
+def test_handle_leaves_non_media_commands_alone(mock_media_control, command, mock_core):
+    """When a command merely contains a playback verb then it is passed on."""
+    assert media.handle(command, mock_core) is None
+    assert not mock_media_control.called
+
+
+@pytest.mark.parametrize(
+    ["command", "expected_action"],
+    [
+        ("stop the music", "pause"),
+        ("stop playing", "pause"),
+        ("pause the music", "pause"),
+        ("next track", "next"),
+        ("play music", "play"),
+    ],
+)
+@patch.object(media, "media_control", return_value=True)
+def test_handle_accepts_a_verb_with_a_media_noun(
+    mock_media_control, command, expected_action, mock_core
+):
+    """When the command names what is playing then the verb still resolves."""
+    assert media.handle(command, mock_core) is True
+    assert mock_media_control.call_args.args[0] == expected_action
+
+
+@patch.object(media, "media_control", return_value=False)
+def test_handle_reports_when_no_player_is_running(mock_media_control, mock_core):
+    """When nothing is playing then say so rather than claiming success.
+
+    The reply used to be spoken before the action, so "play" with no player
+    running answered "Playing." and did nothing at all.
+    """
+    assert media.handle("play", mock_core) is True
+    assert mock_core.speak.call_args.args[0] == "No media player is running."
+
+
+@patch.object(media, "media_control", return_value=True)
+def test_handle_speaks_only_after_the_action(mock_media_control, mock_core):
+    """When playback is controlled then the confirmation follows the action."""
+    assert media.handle("pause", mock_core) is True
+    assert mock_core.speak.call_args.args[0] == "Paused."

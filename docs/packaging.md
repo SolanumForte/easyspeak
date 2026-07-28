@@ -44,6 +44,11 @@ This is **fully offline** (assuming the system dependencies — GTK4, PortAudio,
 PyGObject, … — are already present, as on any GNOME desktop). Then launch
 **EasySpeak** from the applications menu, or run `easyspeak`.
 
+Dictation additionally needs a clipboard tool — `wl-clipboard` on Wayland,
+`xclip` on X11 — since it places text by pasting rather than through the
+accessibility bridge, which Chromium-based applications ignore. It is a
+`recommends`, so a minimal install may not pull it in.
+
 Installing the app **without** a language pack also works: the wake word is built
 in, the Whisper model then downloads automatically on first run, and voice feedback
 stays off until you add a Piper voice.

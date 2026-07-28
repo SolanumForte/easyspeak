@@ -27,6 +27,20 @@ def tap_key(keycode):
     Raises if RemoteDesktop is unavailable (e.g. a non-GNOME session) so the caller can
     fall back to a silent change.
     """
+    tap_chord([keycode])
+
+
+def tap_chord(keycodes):
+    """Hold a chord of evdev keycodes together, then release it.
+
+    Keys go down in the order given and come up in reverse, so `[CTRL, V]` is the
+    Ctrl+V an application expects rather than two unrelated keypresses. Used for
+    pasting dictated text, which is how text reaches an application: every toolkit
+    implements paste, whereas accessibility-level insertion is widely stubbed out
+    (Chromium-based apps accept it and discard it).
+
+    Raises if RemoteDesktop is unavailable, so the caller can report why.
+    """
     conn = open_dbus_connection(bus="SESSION")
     try:
         reply = conn.send_and_get_reply(
@@ -40,10 +54,14 @@ def tap_key(keycode):
         conn.send_and_get_reply(new_method_call(session, "Start"))
         # Synchronous replies guarantee Mutter has processed each event before
         # we move on, so no settling delay is needed before Stop.
-        for pressed in (True, False):
+        for keycode in keycodes:
+            conn.send_and_get_reply(
+                new_method_call(session, "NotifyKeyboardKeycode", "ub", (keycode, True))
+            )
+        for keycode in reversed(keycodes):
             conn.send_and_get_reply(
                 new_method_call(
-                    session, "NotifyKeyboardKeycode", "ub", (keycode, pressed)
+                    session, "NotifyKeyboardKeycode", "ub", (keycode, False)
                 )
             )
         conn.send_and_get_reply(new_method_call(session, "Stop"))

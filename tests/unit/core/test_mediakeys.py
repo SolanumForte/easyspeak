@@ -52,3 +52,31 @@ def test_tap_key_closes_connection_on_error(mock_open):
         mediakeys.tap_key(115)
 
     conn.close.assert_called_once()
+
+
+def test_tap_chord_presses_together_and_releases_in_reverse():
+    """Ctrl+V is one chord, not two unrelated keypresses.
+
+    Keys go down in order and come up backwards, which is what an application
+    reads as a modifier being held while another key is struck.
+    """
+    conn = Mock()
+    conn.send_and_get_reply = Mock(return_value=Mock(body=("/session/1",)))
+
+    with patch("easyspeak.core.mediakeys.open_dbus_connection", return_value=conn):
+        mediakeys.tap_chord([29, 47])
+
+    keys = [
+        call.args[0].body
+        for call in conn.send_and_get_reply.call_args_list
+        if call.args[0].header.fields.get(3) == "NotifyKeyboardKeycode"
+    ]
+    assert keys == [(29, True), (47, True), (47, False), (29, False)]
+
+
+def test_tap_key_is_a_single_key_chord():
+    """The volume-key path still works, now expressed through tap_chord."""
+    with patch("easyspeak.core.mediakeys.tap_chord") as mock_chord:
+        mediakeys.tap_key(115)
+
+    assert mock_chord.call_args.args[0] == [115]

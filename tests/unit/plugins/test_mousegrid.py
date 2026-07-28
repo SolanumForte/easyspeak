@@ -801,44 +801,6 @@ def test_listen_for_grid_commands_drag(mock_end_drag, mock_core_factory):
     assert mock_end_drag.called
 
 
-def test_listen_for_grid_commands_timeout(mock_core_factory):
-    """When listen_for_grid_commands times out waiting then it continues loop."""
-    mock_core = mock_core_factory(
-        wait_for_speech_values=[None, b"audio"], transcribe_values=["close"]
-    )
-    mousegrid_plugin.grid_active = True
-
-    mousegrid_plugin.listen_for_grid_commands(mock_core)
-
-    assert mock_core.wait_for_speech.call_count == 2
-
-
-def test_listen_for_grid_commands_empty_transcription(mock_core_factory):
-    """When listen_for_grid_commands receives empty transcription then it continues loop."""
-    mock_core = mock_core_factory(
-        wait_for_speech_values=[b"audio1", b"audio2"],
-        transcribe_values=["", "close"],
-    )
-    mousegrid_plugin.grid_active = True
-
-    mousegrid_plugin.listen_for_grid_commands(mock_core)
-
-    assert mock_core.transcribe.call_count == 2
-
-
-def test_listen_for_grid_commands_stream_read_exception(mock_core_factory):
-    """When listen_for_grid_commands encounters stream read exception then it continues."""
-    mock_core = mock_core_factory(
-        wait_for_speech_values=[b"audio"], transcribe_values=["close"]
-    )
-    mock_core.stream.read.side_effect = Exception("Stream error")
-    mousegrid_plugin.grid_active = True
-
-    mousegrid_plugin.listen_for_grid_commands(mock_core)
-
-    assert mousegrid_plugin.grid_active is False
-
-
 @pytest.mark.parametrize(
     ["exit_command"],
     [
@@ -862,3 +824,131 @@ def test_listen_for_grid_commands_exit_commands(exit_command, mock_core_factory)
     mousegrid_plugin.listen_for_grid_commands(mock_core)
 
     assert mousegrid_plugin.grid_active is False
+
+
+def test_listen_for_grid_commands_no_grid(mock_core):
+    """When the grid never opened then no listening mode is entered."""
+    mousegrid_plugin.grid_active = False
+
+    mousegrid_plugin.listen_for_grid_commands(mock_core)
+
+    mock_core.listen_modal.assert_not_called()
+
+
+@patch.object(mousegrid_plugin, "dbus_call", return_value=True)
+def test_listen_for_grid_commands_releases_drag_on_exit(mock_dbus, mock_core_factory):
+    """When the mode ends with a drag in progress then the button is released."""
+    mock_core = mock_core_factory(transcribe_values=["close"])
+    mousegrid_plugin.grid_active = True
+    mousegrid_plugin.grid_bounds = (0, 0, 300, 300)
+    mousegrid_plugin.drag_start = (10, 20)
+
+    mousegrid_plugin.listen_for_grid_commands(mock_core)
+
+    end_drag = [c for c in mock_dbus.call_args_list if c.args[0] == "EndDrag"]
+    assert len(end_drag) == 1
+    assert mousegrid_plugin.drag_start is None
+
+
+@patch.object(mousegrid_plugin, "dbus_call", return_value=True)
+def test_listen_for_grid_commands_hides_orphaned_overlay(mock_dbus, mock_core):
+    """When the mode ends without a closing command then the overlay is hidden."""
+    mousegrid_plugin.grid_active = True
+    mousegrid_plugin.grid_bounds = (0, 0, 300, 300)
+    mock_core.transcribe.side_effect = []  # core ended the mode: idle or tray
+
+    mousegrid_plugin.listen_for_grid_commands(mock_core)
+
+    assert [c.args[0] for c in mock_dbus.call_args_list] == ["Hide"]
+    assert mousegrid_plugin.grid_active is False
+    assert mousegrid_plugin.grid_bounds is None
+
+
+@patch.object(mousegrid_plugin, "dbus_call", return_value=True)
+def test_listen_for_grid_commands_hides_overlay_once(mock_dbus, mock_core_factory):
+    """When "close" already hid the grid then the exit path does not hide it again."""
+    mock_core = mock_core_factory(transcribe_values=["close"])
+    mousegrid_plugin.grid_active = True
+    mousegrid_plugin.grid_bounds = (0, 0, 300, 300)
+
+    mousegrid_plugin.listen_for_grid_commands(mock_core)
+
+    assert [c.args[0] for c in mock_dbus.call_args_list].count("Hide") == 1
+
+
+@patch.object(mousegrid_plugin, "dbus_call", return_value=True)
+def test_listen_for_grid_commands_releases_drag_before_hiding(mock_dbus, mock_core):
+    """When a drag is pending then it is released before the bounds are cleared."""
+    mousegrid_plugin.grid_active = True
+    mousegrid_plugin.grid_bounds = (0, 0, 300, 300)
+    mousegrid_plugin.drag_start = (10, 20)
+    mock_core.transcribe.side_effect = []
+
+    mousegrid_plugin.listen_for_grid_commands(mock_core)
+
+    methods = [c.args[0] for c in mock_dbus.call_args_list]
+    assert methods == ["EndDrag", "Hide"]
+    # Released at the cell centre, which only exists before close_grid() runs.
+    end_drag = mock_dbus.call_args_list[0]
+    assert end_drag.args[1:] == (150, 150)
+
+
+# --- Saying what happened -----------------------------------------------------
+#
+# Every command below ends grid mode. The overlay vanishing is the only cue, and
+# it says nothing about what was done — so away from a terminal a click, a scroll
+# and a timeout are indistinguishable.
+
+
+@pytest.mark.parametrize(
+    ["command", "expected"],
+    [
+        ("click", "Clicked"),
+        ("double click", "Double clicked"),
+        ("right click", "Right clicked"),
+        ("middle click", "Middle clicked"),
+        ("scroll down", "Scrolled"),
+        ("close", "Grid closed"),
+    ],
+)
+@patch.object(mousegrid_plugin, "dbus_call", return_value=True)
+def test_grid_announces_what_it_did(mock_dbus, command, expected, mock_core_factory):
+    """The grid disappearing looks the same whatever caused it."""
+    mock_core = mock_core_factory(transcribe_values=[command])
+    mousegrid_plugin.grid_active = True
+    mousegrid_plugin.grid_bounds = (0, 0, 300, 300)
+
+    mousegrid_plugin.listen_for_grid_commands(mock_core)
+
+    assert expected in [call.args[0] for call in mock_core.speak.call_args_list]
+
+
+@patch.object(mousegrid_plugin, "dbus_call", return_value=True)
+def test_marking_a_drag_is_announced(mock_dbus, mock_core_factory):
+    """Nothing on screen changes when a drag starts."""
+    mock_core = mock_core_factory(transcribe_values=["mark", "close"])
+    mousegrid_plugin.grid_active = True
+    mousegrid_plugin.grid_bounds = (0, 0, 300, 300)
+    mousegrid_plugin.screen_size = (1920, 1080)  # start_drag resets to full screen
+
+    mousegrid_plugin.listen_for_grid_commands(mock_core)
+
+    assert "Holding" in [call.args[0] for call in mock_core.speak.call_args_list]
+
+
+@patch.object(mousegrid_plugin, "dbus_call", return_value=True)
+def test_the_drag_reply_cannot_start_another_drag(mock_dbus, mock_core_factory):
+    """Grid mode keeps listening after "mark", so the reply must not contain it.
+
+    The microphone hears every spoken reply; "Marked" would come back as a second
+    "mark" and press the button again.
+    """
+    mock_core = mock_core_factory(transcribe_values=["mark", "close"])
+    mousegrid_plugin.grid_active = True
+    mousegrid_plugin.grid_bounds = (0, 0, 300, 300)
+    mousegrid_plugin.screen_size = (1920, 1080)
+
+    mousegrid_plugin.listen_for_grid_commands(mock_core)
+
+    spoken = [call.args[0].lower() for call in mock_core.speak.call_args_list]
+    assert not any("mark" in phrase for phrase in spoken)

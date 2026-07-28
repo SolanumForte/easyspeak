@@ -59,14 +59,27 @@ sudo dnf install \
   ffmpeg-free \
   pulseaudio-utils \
   sound-theme-freedesktop \
+  wl-clipboard \
   portaudio-devel \
   python3-devel \
   gcc
 ```
 
+`wl-clipboard` is what dictation uses to place text. It types by putting the
+text on the clipboard and sending a paste keystroke, because accessibility-level
+insertion is silently ignored by Chromium-based applications — they accept the
+call, report success, and discard the text. Without `wl-clipboard` (or `xclip` on
+X11) dictation falls back to that path and quietly does nothing in a browser.
+
 `python3-gobject` and `libadwaita` power the tray menu's **About EasySpeak**
 window. They ship with any GNOME desktop, so they're usually already present;
 they're listed here for the sake of minimal or non-GNOME installs.
+
+Optionally, `sudo dnf install python3-adblock` gives qutebrowser Brave's
+element-level ad blocker. EasySpeak configures the browser to use it when it is
+present and falls back to host blocking when it is not, so this is worth having:
+ad overlays are numbered like any other element, so they take link hints away
+from the page underneath.
 
 ### 2. Piper TTS
 

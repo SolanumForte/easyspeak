@@ -397,38 +397,6 @@ def test_listen_for_tracking_commands_nudge_when_frozen(
 
 @patch.object(eyetrack_plugin, "get_screen_size", return_value=(1920, 1080))
 @patch.object(eyetrack_plugin, "dbus_call", return_value=True)
-def test_listen_for_tracking_commands_timeout(mock_dbus, mock_screen_size, mock_core):
-    """When listen_for_tracking_commands times out waiting then it continues loop."""
-    eyetrack_plugin.tracking_active = True
-
-    mock_core.wait_for_speech.side_effect = [None, b"audio"]
-    mock_core.record_until_silence.return_value = b"more_audio"
-    mock_core.transcribe.return_value = "stop"
-
-    eyetrack_plugin.listen_for_tracking_commands(mock_core)
-
-    assert mock_core.wait_for_speech.call_count == 2
-
-
-@patch.object(eyetrack_plugin, "get_screen_size", return_value=(1920, 1080))
-@patch.object(eyetrack_plugin, "dbus_call", return_value=True)
-def test_listen_for_tracking_commands_empty_transcription(
-    mock_dbus, mock_screen_size, mock_core
-):
-    """When listen_for_tracking_commands receives empty transcription then it continues loop."""
-    eyetrack_plugin.tracking_active = True
-
-    mock_core.wait_for_speech.side_effect = [b"audio1", b"audio2"]
-    mock_core.record_until_silence.return_value = b"more_audio"
-    mock_core.transcribe.side_effect = ["", "stop"]
-
-    eyetrack_plugin.listen_for_tracking_commands(mock_core)
-
-    assert mock_core.transcribe.call_count == 2
-
-
-@patch.object(eyetrack_plugin, "get_screen_size", return_value=(1920, 1080))
-@patch.object(eyetrack_plugin, "dbus_call", return_value=True)
 def test_listen_for_tracking_commands_go_unfreezes(
     mock_dbus, mock_screen_size, mock_core
 ):
@@ -538,24 +506,6 @@ def test_listen_for_tracking_commands_right_click(
         call for call in mock_dbus.call_args_list if call.args[0] == "RightClick"
     ]
     assert len(right_click_calls) >= 1
-
-
-@patch.object(eyetrack_plugin, "get_screen_size", return_value=(1920, 1080))
-@patch.object(eyetrack_plugin, "dbus_call", return_value=True)
-def test_listen_for_tracking_commands_stream_read_exception(
-    mock_dbus, mock_screen_size, mock_core
-):
-    """When listen_for_tracking_commands encounters stream read exception then it continues."""
-    eyetrack_plugin.tracking_active = True
-    mock_core.stream.read.side_effect = Exception("Stream error")
-
-    mock_core.wait_for_speech.return_value = b"audio"
-    mock_core.record_until_silence.return_value = b"more_audio"
-    mock_core.transcribe.return_value = "stop"
-
-    eyetrack_plugin.listen_for_tracking_commands(mock_core)
-
-    assert eyetrack_plugin.tracking_active is False
 
 
 @pytest.mark.parametrize(
@@ -684,3 +634,53 @@ def test_run_tracking_scenarios(
         assert eyetrack_plugin.tracking_active is False
         if webcam_opens:
             assert mock_cap.release.called
+
+
+@patch.object(eyetrack_plugin, "get_screen_size", return_value=(1920, 1080))
+def test_listen_for_tracking_commands_thread_gone(mock_screen_size, mock_core):
+    """When tracking has stopped then the mode ends on the next command."""
+    eyetrack_plugin.tracking_active = False
+    mock_core.transcribe.return_value = "click"
+
+    eyetrack_plugin.listen_for_tracking_commands(mock_core)
+
+    assert mock_core.listen_modal.called
+
+
+@pytest.mark.parametrize(
+    ["command", "expected"],
+    [("freeze", "Frozen"), ("go", "Following")],
+)
+@patch.object(eyetrack_plugin, "get_screen_size", return_value=(1920, 1080))
+@patch.object(eyetrack_plugin, "dbus_call", return_value=True)
+def test_tracking_announces_its_state(
+    mock_dbus, mock_screen, command, expected, mock_core_factory
+):
+    """Whether the cursor is following the head is otherwise a guess."""
+    mock_core = mock_core_factory(transcribe_values=[command, "stop tracking"])
+    eyetrack_plugin.tracking_active = True
+
+    eyetrack_plugin.listen_for_tracking_commands(mock_core)
+
+    assert expected in [call.args[0] for call in mock_core.speak.call_args_list]
+
+
+@patch.object(eyetrack_plugin, "get_screen_size", return_value=(1920, 1080))
+@patch.object(eyetrack_plugin, "dbus_call", return_value=True)
+def test_tracking_replies_cannot_re_trigger_themselves(
+    mock_dbus, mock_screen, mock_core_factory
+):
+    """Tracking keeps listening, so a reply that repeats its own trigger loops.
+
+    "Frozen" and "Following" are chosen to contain none of the words that reach
+    the branch which spoke them.
+    """
+    mock_core = mock_core_factory(transcribe_values=["freeze", "go", "stop tracking"])
+    eyetrack_plugin.tracking_active = True
+
+    eyetrack_plugin.listen_for_tracking_commands(mock_core)
+
+    spoken = [call.args[0].lower() for call in mock_core.speak.call_args_list]
+    freeze_words = ("freeze", "free", "rees", "frees")
+    assert not any(word in phrase for phrase in spoken for word in freeze_words)
+    assert "following" not in ("go", "go go", "unfreeze", "resume", "track")

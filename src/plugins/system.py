@@ -143,26 +143,37 @@ def handle(cmd, core):
         volume_mute(core)
         return True
 
-    # Brightness
-    if "brightness" in cmd or "screen" in cmd:
-        if "up" in cmd or "brighter" in cmd:
+    # Brightness -- whole-word matching, so "screenshot" isn't read as a screen
+    # command and a stray "up"/"down" inside another word can't flip the direction.
+    if "brightness" in words or "screen" in words:
+        if "up" in words or "brighter" in words:
             core.speak("Brighter.")
             brightness_up(core)
             return True
-        if "down" in cmd or "dimmer" in cmd or "darker" in cmd:
+        if "down" in words or "dimmer" in words or "darker" in words:
             core.speak("Dimmer.")
             brightness_down(core)
             return True
 
-    # Do Not Disturb
-    if "do not disturb" in cmd or "dnd" in cmd or "notifications" in cmd:
-        if "on" in cmd or "enable" in cmd:
+    # Do Not Disturb. Two vocabularies point at the same setting from opposite
+    # directions: "do not disturb on" hides banners, but "notifications on" shows
+    # them -- so the direction word is read against whichever noun was spoken.
+    # Whole words throughout, because "notifications" contains the letters "on" and
+    # a substring test matched the direction inside the trigger word itself.
+    dnd_named = "do not disturb" in cmd or "dnd" in words
+    if dnd_named or "notifications" in words:
+        turning_on = "on" in words or "enable" in words
+        turning_off = "off" in words or "disable" in words
+        if not (turning_on or turning_off):
+            return None  # a bare "notifications" says nothing about direction
+        # Silencing notifications is do-not-disturb ON, so the notifications
+        # vocabulary maps the other way round.
+        if turning_on if dnd_named else turning_off:
             core.speak("Do not disturb on.")
             dnd_on(core)
-            return True
-        if "off" in cmd or "disable" in cmd:
+        else:
             core.speak("Do not disturb off.")
             dnd_off(core)
-            return True
+        return True
 
     return None  # Not handled

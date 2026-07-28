@@ -38,16 +38,67 @@ gsettings set org.gnome.desktop.interface toolkit-accessibility true
 # Log out and back in
 ```
 
+## Dictation types nothing
+
+Dictation places text by putting it on the clipboard and sending a paste
+keystroke. Install the clipboard tool for your session:
+
+```bash
+sudo dnf install wl-clipboard   # Wayland; use xclip on X11
+```
+
+Without it, insertion falls back to the accessibility bridge, which
+Chromium-based applications (qutebrowser, Electron apps) accept and silently
+discard — the log says so:
+
+```
+No clipboard tool found, so dictation is falling back to AT-SPI, ...
+```
+
+If you hear **"No text field focused"**, click into a text field first, or use
+the browser's `numbers` command and pick the hint on the field you want.
+
 ## Browser plugin: link numbers don't work
 
-EasySpeak appends two required lines to `~/.config/qutebrowser/config.py` on
-first run (you'll see a `browser: wrote ...` or `browser: updated ...` message).
-If you see a `browser: note: ... is read-only` or a similar error instead, add
-these lines to the config module yourself:
+EasySpeak appends the lines below to `~/.config/qutebrowser/config.py` on first
+run (you'll see a `browser: wrote ...` or `browser: updated ...` message). If you
+see a `browser: note: ... is read-only` or a similar error instead, add them to
+the config module yourself:
 
 ```python
 config.load_autoconfig(False)
 c.hints.chars = '0123456789'
+c.content.tls.certificate_errors = 'ask-block-thirdparty'
+c.content.notifications.enabled = False
+c.content.geolocation = False
+c.content.autoplay = False
+c.content.blocking.method = 'hosts'
+```
+
+The last four answer prompts and block distractions that voice cannot dismiss: a
+modal "allow notifications?" or expired-certificate dialog stops hands-free
+browsing dead, and ad overlays are numbered like any other element, so they take
+hints away from the page underneath.
+
+Set `c.content.blocking.method = 'both'` for Brave's element-level blocking,
+which is what removes overlays rather than just ad domains. It needs
+`python3-adblock` installed — EasySpeak checks for it and writes whichever value
+works, so installing the package is enough. **Restart qutebrowser** after any
+config change.
+
+## Browser: hints or scrolling stop working after going back
+
+Fixed automatically, but worth knowing why the page reloads. qutebrowser runs
+JavaScript in the page to find hintable elements and to scroll the container
+under the cursor. Going back restores the page from cache without a load, so that
+JavaScript is never re-established — hinting fails with "Unknown error while
+getting elements" and scrolling silently does nothing.
+
+EasySpeak reloads the page before the next hint or scroll after a history
+navigation, which costs your scroll position. You'll hear "Reloading" and see:
+
+```
+↻ Reloading: page scripts don't survive a history navigation
 ```
 
 ## Wake word not detecting
@@ -68,8 +119,25 @@ alsamixer
 
 ## Commands misheard
 
-- Adjust `SILENCE_THRESHOLD` — see [`core.config`][core.config]
 - Speak clearly after the beep
+- Check the noise floor printed at startup: `Room noise floor 412; silence
+  threshold 1030`. The threshold is measured from the room each time, so stay
+  quiet for the first second after launch. Override it with
+  `EASYSPEAK_SILENCE_THRESHOLD` — see [Configuration](usage.md#configuration)
+
+## Everything takes several seconds
+
+Run with `-v` and compare the two numbers on this line:
+
+```
+transcribed 4.2s of audio in 0.45s
+```
+
+The second number is the transcription. If it's small and the first is large,
+recording isn't stopping when you do: silence isn't being detected, so every
+utterance runs to its time cap. Check the noise floor above — if the room is
+loud enough that speech and silence look alike, move the microphone closer or set
+`EASYSPEAK_SILENCE_THRESHOLD` by hand.
 
 ## Piper permission denied
 

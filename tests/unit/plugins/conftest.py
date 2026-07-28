@@ -4,6 +4,43 @@ from unittest.mock import Mock
 
 import pytest
 
+# How many times a constant `transcribe.return_value` is replayed to a modal
+# loop; enough for the tests that expect a repeat, bounded so none can spin.
+REPEATED_TRANSCRIPTION_LIMIT = 3
+
+
+def attach_listen_modal(core):
+    """Give a mock core a stand-in for EasySpeak.listen_modal. Returns the core.
+
+    The real generator (core.main) owns the wait/record/transcribe boilerplate and
+    the tray poll shared by every modal plugin mode, so plugin tests only care which
+    commands arrive. This reads them from whatever the test put on
+    `core.transcribe.side_effect` — lazily, so it works whether the values were set
+    before or after this call — and normalises each exactly as core does. Falsy
+    entries are skipped, so feeding `[None, "close"]` still covers "nothing
+    recognised, then a command".
+    """
+
+    def _listen_modal(_label, **_kwargs):
+        values = getattr(core.transcribe, "side_effect", None) or []
+        yielded = False
+        for value in values:
+            if value:
+                yielded = True
+                yield value.lower().strip(".,!? ")
+        if yielded:
+            return
+        # Tests that set a constant `transcribe.return_value` relied on the old
+        # `while` loop supplying it repeatedly. Repeat it a bounded number of
+        # times so those keep working without any test being able to spin.
+        constant = getattr(core.transcribe, "return_value", None)
+        if isinstance(constant, str) and constant:
+            for _ in range(REPEATED_TRANSCRIPTION_LIMIT):
+                yield constant.lower().strip(".,!? ")
+
+    core.listen_modal = Mock(side_effect=_listen_modal)
+    return core
+
 
 @pytest.fixture
 def mock_core():
@@ -11,7 +48,7 @@ def mock_core():
     core = Mock()
     core.stream.read = Mock()
     core.stream.get_read_available = Mock(return_value=1024)
-    return core
+    return attach_listen_modal(core)
 
 
 @pytest.fixture
@@ -36,7 +73,7 @@ def mock_core_with_audio():
     core.stream.get_read_available = Mock(return_value=1024)
     core.wait_for_speech = Mock(return_value=b"audio1")
     core.record_until_silence = Mock(return_value=b"audio2")
-    return core
+    return attach_listen_modal(core)
 
 
 @pytest.fixture
@@ -99,6 +136,6 @@ def mock_core_factory():
         else:
             core.transcribe = Mock()
 
-        return core
+        return attach_listen_modal(core)
 
     return _create_mock_core

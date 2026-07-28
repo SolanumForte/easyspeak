@@ -36,12 +36,36 @@ NETWORK_ALLOWED = OFFLINE_MODE == "relaxed"
 
 # --- Wake word ---
 WAKE_WORD = "hey_jarvis"  # OpenWakeWord model name
+
+# How the wake word is said aloud, for telling the user they need it again. A mode
+# ending is otherwise invisible: commands that worked a moment ago start being
+# ignored, with nothing to say why.
+WAKE_WORD_SPOKEN = "Hey Jarvis"
 WAKE_THRESHOLD = 0.5
 WAKE_COOLDOWN = 3.0  # Seconds to ignore wake word after trigger
 
 # --- Audio thresholds ---
+# Mean absolute amplitude below which a chunk counts as silence. This is only the
+# floor: the real threshold is measured from the room at startup, because a fixed
+# one assumes a quiet room. Where the ambient level sits above it -- a desk fan, a
+# desktop machine, an air conditioner -- silence is never detected at all, so every
+# recording runs to its full time cap and every command feels slow.
 SILENCE_THRESHOLD = 300
+
+# Never calibrate above this: speech itself sits well above it, and a threshold
+# that high would treat a spoken sentence as silence.
+SILENCE_THRESHOLD_MAX = 2000
+
+# How long to listen to the room at startup, and how far above the measured floor
+# to put the threshold.
+SILENCE_CALIBRATION_SECONDS = 1.0
+SILENCE_NOISE_MARGIN = 2.5
 SILENCE_DURATION = 0.3
+
+# Longest single utterance, in seconds. Commands are a few words, so a short cap
+# keeps the daemon responsive.
+MAX_RECORD_SECONDS = 5.0
+
 
 MISUNDERSTAND_GRACE = 4.0  # Seconds to ignore repeat misses after feedback
 FOLLOWUP_IDLE_ROUNDS = 2  # Quiet listens tolerated before a command session ends

@@ -4,6 +4,28 @@
 // can be unit-tested with `node --test` outside a running shell (the rest of
 // extension.js can only run inside gnome-shell). Keep this file dependency-free.
 
+// Interpolate the pointer path for a drag, from the press point to the drop
+// point, as `steps` positions ending exactly on the target.
+//
+// Drag-and-drop is not a teleport. A toolkit begins a drag only once it has seen
+// the pointer travel past its threshold (8px in GTK by default) while the button
+// is held, and it works out a drop target from where the pointer comes to rest.
+// Injecting press, one jump, release reads as a click, and nothing is ever
+// dropped. Motion is eased in so the first positions stay near the source the way
+// a hand-held drag does, while still crossing the threshold within a few steps.
+export function dragPath(sx, sy, tx, ty, steps) {
+    const path = [];
+    for (let i = 1; i <= steps; i++) {
+        const progress = i / steps;
+        const eased = progress * progress * (3 - 2 * progress);
+        path.push({
+            x: Math.round(sx + (tx - sx) * eased),
+            y: Math.round(sy + (ty - sy) * eased),
+        });
+    }
+    return path;
+}
+
 // Clamp a rectangle so it stays inside the work area. Mirrors the inverse-of-
 // nothing identity when there is no work area (e.g. before the grid is shown).
 export function clampToWorkArea(x, y, w, h, workArea) {

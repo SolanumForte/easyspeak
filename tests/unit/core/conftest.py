@@ -12,6 +12,44 @@ for _name in ("pyaudio", "pyopen_wakeword", "faster_whisper"):
     sys.modules[_name] = MagicMock()
 
 
+from easyspeak.core import main as main_module  # noqa: E402
+from easyspeak.core import tray as tray_module  # noqa: E402
+
+# Kept before the stub below replaces it, so the tests that exercise calibration
+# itself can put the real method back.
+REAL_CALIBRATE_SILENCE = main_module.EasySpeak.calibrate_silence
+
+
+@pytest.fixture(autouse=True)
+def _skip_silence_calibration(monkeypatch):
+    """Don't sample the microphone at startup during tests.
+
+    calibrate_silence() reads a second of audio when the daemon starts, which
+    every test that drives run() would otherwise count as part of its own
+    recording. Its own behaviour is covered directly in test_listen_modal.
+    """
+    monkeypatch.setattr(main_module.EasySpeak, "calibrate_silence", lambda _self: None)
+
+
+@pytest.fixture(autouse=True)
+def _silence_desktop_sounds(monkeypatch, tmp_path_factory):
+    """Keep the suite from chiming through the speakers.
+
+    `play_sound` spawns a real audio player whenever the sound file exists, so on
+    any desktop with sound-theme-freedesktop installed the suite played the wake
+    chime out loud while it ran. Pointing the sound paths at a file that isn't
+    there makes it short-circuit before spawning anything. Tests that exercise the
+    player itself pass their own path and patch `subprocess.run`, so they are
+    unaffected.
+    """
+    missing = tmp_path_factory.mktemp("nosound") / "absent.oga"
+    for module, name in (
+        (main_module, "WAKE_SOUND"),
+        (tray_module, "ERROR_SOUND"),
+    ):
+        monkeypatch.setattr(module, name, missing)
+
+
 def create_mock_plugin(name="TestPlugin", **kwargs) -> Mock:
     """
     Factory function to create mock plugin objects.

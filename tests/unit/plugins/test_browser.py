@@ -449,7 +449,7 @@ def test_handle_browser_command_escape(mock_qb, command, mock_core):
 
     assert result is True
     assert mock_qb.called
-    assert mock_qb.call_args.args[0] == "mode-leave"
+    assert mock_qb.call_args.args[0] == "fake-key <Escape>"
 
 
 @pytest.mark.parametrize(
@@ -579,8 +579,9 @@ def test_setup(mock_ensure, mock_core):
         "launch browser",
     ],
 )
+@patch.object(browser, "_qutebrowser_running", return_value=False)
 @patch.object(browser, "browser_mode")
-def test_handle_browser_mode(mock_browser_mode, command, mock_core):
+def test_handle_browser_mode(mock_browser_mode, mock_running, command, mock_core):
     """Test handle function for entering browser mode."""
     result = browser.handle(command, mock_core)
 
@@ -739,15 +740,19 @@ def test_qutebrowser_running(returncode, expected, mock_core):
 @patch("time.sleep")
 @patch.object(browser, "qb")
 def test_listen_for_hint_timeout(mock_qb, mock_sleep, mock_core_factory, readlog):
-    """When no speech is detected, hints are cancelled and mode-leave is called."""
-    mock_core = mock_core_factory(wait_for_speech_values=[None])
+    """Silence means no hints rendered, so ask again before giving up.
+
+    qutebrowser's element enumeration fails outright on some pages -- notably
+    after going back -- and the error is shown in the browser rather than
+    returned over IPC, so there is nothing here to test for.
+    """
+    mock_core = mock_core_factory(wait_for_speech_values=[None] * 8)
 
     browser.listen_for_hint(mock_core)
 
-    assert mock_qb.called
-    assert mock_qb.call_args.args[0] == "mode-leave"
-    captured = readlog()
-    assert "Timeout - hints cancelled" in captured.out
+    sent = [call.args[0] for call in mock_qb.call_args_list]
+    assert sent.count("hint") == 3  # three retries, then it stops
+    assert "Timeout - hints cancelled" in readlog().out
 
 
 @patch("time.sleep")
@@ -763,7 +768,7 @@ def test_listen_for_hint_no_transcription_timeout(
     browser.listen_for_hint(mock_core)
 
     assert mock_qb.called
-    assert mock_qb.call_args.args[0] == "mode-leave"
+    assert mock_qb.call_args.args[0] == "fake-key <Escape>"
     captured = readlog()
     assert "no transcription" in captured.out
 
@@ -811,7 +816,7 @@ def test_listen_for_hint_cancel(
     browser.listen_for_hint(mock_core)
 
     assert mock_qb.called
-    assert mock_qb.call_args.args[0] == "mode-leave"
+    assert mock_qb.call_args.args[0] == "fake-key <Escape>"
     captured = readlog()
     assert "Hints cancelled" in captured.out
 
@@ -866,7 +871,7 @@ def test_listen_for_hint_audio_buffer_exception(
 ):
     """When clearing audio buffer raises exception, it is caught and ignored."""
     mock_core = mock_core_factory(
-        wait_for_speech_values=[None], transcribe_values=["exit browser"]
+        wait_for_speech_values=[None] * 8, transcribe_values=["exit browser"]
     )
     # Make stream.read raise an exception
     mock_core.stream.read.side_effect = Exception("Audio buffer error")
@@ -875,7 +880,7 @@ def test_listen_for_hint_audio_buffer_exception(
 
     # Should still work despite the exception
     assert mock_qb.called
-    assert mock_qb.call_args.args[0] == "mode-leave"
+    assert mock_qb.call_args.args[0] == "fake-key <Escape>"
     captured = readlog()
     assert "Timeout - hints cancelled" in captured.out
 
@@ -894,7 +899,9 @@ def test_listen_for_hint_not_a_hint_pass_through(
     browser.listen_for_hint(mock_core)
 
     assert mock_qb.called
-    assert mock_qb.call_args.args[0] == "mode-leave"
+    # Escape, not :mode-leave -- leaving is only legal from a special mode, and
+    # following a hint has often already returned qutebrowser to normal.
+    assert mock_qb.call_args.args[0] == "fake-key <Escape>"
     assert mock_handle_cmd.called
     assert mock_handle_cmd.call_args.args == ("go back", mock_core)
     captured = readlog()
@@ -913,8 +920,12 @@ def test_browser_mode_timeout_continue(mock_handle_cmd, mock_core_factory, readl
 
     browser.browser_mode(mock_core)
 
-    assert mock_core.speak.call_count == 1
-    assert mock_core.speak.call_args.args[0] == "Browser"
+    # "Browser" on the way in, "Left the browser" on the way out: away from a
+    # terminal these transitions are otherwise silent.
+    assert [call.args[0] for call in mock_core.speak.call_args_list] == [
+        "Browser",
+        "Left the browser",
+    ]
     captured = readlog()
     assert "BROWSER MODE ACTIVE" in captured.out
     assert "BROWSER MODE EXIT" in captured.out
@@ -989,17 +1000,18 @@ def test_browser_mode_grid_trigger(
 
 
 @patch.object(browser, "handle_browser_command", return_value=False)
-def test_browser_mode_unknown_command(mock_handle_cmd, mock_core_factory, readlog):
-    """When an unknown command is spoken, browser_mode prints unknown message."""
-    mock_core = mock_core_factory(
-        wait_for_speech_values=[b"audio1", b"audio2"],
-        transcribe_values=["unknown command", "exit browser"],
-    )
+def test_browser_mode_routes_non_browser_commands(mock_handle_cmd, mock_core_factory):
+    """When a command isn't the browser's then the daemon gets a go at it.
+
+    Browser mode used to be a dead end: "notes", "open downloads" and everything
+    else were logged as unknown and dropped, so there was no way to dictate into a
+    page without leaving the mode first.
+    """
+    mock_core = mock_core_factory(transcribe_values=["notes", "exit browser"])
 
     browser.browser_mode(mock_core)
 
-    captured = readlog()
-    assert "? Unknown: unknown command" in captured.out
+    assert mock_core.route_command.call_args.args[0] == "notes"
 
 
 @patch.object(browser, "handle_browser_command")
@@ -1185,3 +1197,553 @@ def test_ensure_qutebrowser_config_write_fails(fake_home, readlog):
     # Only the still-missing line should be listed.
     assert "c.hints.chars = '0123456789'" in captured.err
     assert "config.load_autoconfig(False)" not in captured.err.split("includes:")[1]
+
+
+@patch.object(browser, "handle_browser_command", return_value=False)
+def test_browser_mode_stays_after_routing(mock_handle_cmd, mock_core_factory):
+    """When a routed command finishes then browsing carries on."""
+    mock_core = mock_core_factory(transcribe_values=["notes", "back", "exit browser"])
+
+    browser.browser_mode(mock_core)
+
+    # "back" was still offered to the browser after "notes" was routed away.
+    assert [c.args[0] for c in mock_handle_cmd.call_args_list] == [
+        "notes",
+        "back",
+    ]
+
+
+@patch.object(browser, "handle_browser_command", return_value=False)
+def test_browser_mode_exits_daemon_on_quit(mock_handle_cmd, mock_core_factory):
+    """When a routed command is a quit then the daemon goes down with it."""
+    mock_core = mock_core_factory(transcribe_values=["goodbye"])
+    mock_core.route_command = Mock(return_value=False)
+
+    browser.browser_mode(mock_core)
+
+    assert mock_core.exit_requested is True
+
+
+@pytest.mark.parametrize("command", ["close browser", "quit browser"])
+@patch.object(browser, "qb")
+def test_browser_mode_close_quits_the_browser(mock_qb, command, mock_core_factory):
+    """When told to close the browser then qutebrowser is actually quit.
+
+    Leaving the mode and closing the application were the same list, so this only
+    ever stepped out of browser mode and left the window sitting there.
+    """
+    mock_core = mock_core_factory(transcribe_values=[command])
+
+    browser.browser_mode(mock_core)
+
+    assert mock_qb.call_args.args[0] == "quit"
+    assert mock_core.speak.call_args.args[0] == "Closing browser."
+
+
+@pytest.mark.parametrize("command", ["exit browser", "leave browser"])
+@patch.object(browser, "qb")
+def test_browser_mode_leave_keeps_the_browser(mock_qb, command, mock_core_factory):
+    """When told to leave the mode then the browser is left running."""
+    mock_core = mock_core_factory(transcribe_values=[command])
+
+    browser.browser_mode(mock_core)
+
+    assert not mock_qb.called
+
+
+@pytest.mark.parametrize("command", ["close browser", "quit browser"])
+@patch.object(browser, "browser_mode")
+@patch.object(browser, "_qutebrowser_running", return_value=True)
+@patch.object(browser, "qb")
+def test_handle_closes_the_browser_without_entering_mode(
+    mock_qb, mock_running, mock_browser_mode, command, mock_core
+):
+    """When closing the browser from outside then no mode is entered."""
+    assert browser.handle(command, mock_core) is True
+    assert mock_qb.call_args.args[0] == "quit"
+    assert not mock_browser_mode.called
+
+
+@patch.object(browser, "_qutebrowser_running", return_value=False)
+@patch.object(browser, "qb")
+def test_handle_close_reports_when_not_running(mock_qb, mock_running, mock_core):
+    """When the browser isn't running then say so rather than doing nothing."""
+    assert browser.handle("close browser", mock_core) is True
+    assert mock_core.speak.call_args.args[0] == "The browser isn't running."
+    assert not mock_qb.called
+
+
+@patch.object(browser, "browser_mode")
+@patch.object(browser, "_qutebrowser_running", return_value=True)
+def test_handle_absorbs_a_stale_leave_command(
+    mock_running, mock_browser_mode, mock_core
+):
+    """When already outside browser mode then "exit browser" is not an error.
+
+    It used to fall through every plugin and land on "Sorry, I didn't understand."
+    """
+    assert browser.handle("exit browser", mock_core) is True
+    assert not mock_browser_mode.called
+
+
+@patch.object(browser, "handle_browser_command", return_value=True)
+def test_browser_mode_keeps_going_after_a_browser_command(
+    mock_handle_cmd, mock_core_factory
+):
+    """When the browser handles a command then the mode carries on to the next."""
+    mock_core = mock_core_factory(transcribe_values=["back", "reload", "exit browser"])
+
+    browser.browser_mode(mock_core)
+
+    assert [c.args[0] for c in mock_handle_cmd.call_args_list] == ["back", "reload"]
+    assert not mock_core.route_command.called
+
+
+@pytest.mark.parametrize("command", ["browser", "open browser"])
+@patch.object(browser, "browser_mode")
+@patch.object(browser, "_qutebrowser_running", return_value=True)
+def test_handle_does_not_relaunch_a_running_browser(
+    mock_running, mock_browser_mode, command, mock_core
+):
+    """When a browser is already up then entering the mode must not disturb it.
+
+    Running `qutebrowser` again reaches the live instance over IPC and opens the
+    start page, which raises a new tab and takes keyboard focus off whatever the
+    user had clicked -- so a dictated phrase pasted into the page body instead of
+    the field they were aiming at.
+    """
+    assert browser.handle(command, mock_core) is True
+
+    launches = [
+        call
+        for call in mock_core.host_run.call_args_list
+        if call.args[0][0] == "qutebrowser"
+    ]
+    assert launches == []
+    assert mock_browser_mode.called
+
+
+@patch.object(browser, "browser_mode")
+@patch.object(browser, "_qutebrowser_running", return_value=False)
+def test_handle_launches_with_a_clean_environment(
+    mock_running, mock_browser_mode, mock_core
+):
+    """A launched browser must not inherit EasySpeak's own library paths."""
+    browser.handle("open browser", mock_core)
+
+    assert mock_core.host_run.call_args.kwargs["clean_env"] is True
+
+
+@pytest.mark.parametrize("command", ["browser", "browser mode", "open browser"])
+@patch.object(browser, "browser_mode")
+def test_handle_does_not_nest_browser_mode(mock_browser_mode, command, mock_core):
+    """Saying "browser" while already in browser mode must not stack another.
+
+    Commands this plugin doesn't own are handed back to the daemon, and "browser"
+    is one it does own -- so it routed straight back into handle() and opened a
+    second mode on top of the first, relaunching the browser on the way.
+    """
+    browser.in_browser_mode = True
+    try:
+        assert browser.handle(command, mock_core) is True
+    finally:
+        browser.in_browser_mode = False
+
+    assert not mock_browser_mode.called
+    assert not mock_core.host_run.called
+
+
+@patch.object(browser, "handle_browser_command", return_value=False)
+def test_browser_mode_flag_is_cleared_on_exit(mock_handle_cmd, mock_core_factory):
+    """The nesting guard must not outlive the mode it guards."""
+    mock_core = mock_core_factory(transcribe_values=["exit browser"])
+
+    browser.browser_mode(mock_core)
+
+    assert browser.in_browser_mode is False
+
+
+@patch.object(browser, "handle_browser_command", side_effect=RuntimeError("boom"))
+def test_browser_mode_flag_is_cleared_after_a_failure(
+    mock_handle_cmd, mock_core_factory
+):
+    """Even a crash inside the mode leaves the guard down."""
+    mock_core = mock_core_factory(transcribe_values=["back"])
+
+    with pytest.raises(RuntimeError):
+        browser.browser_mode(mock_core)
+
+    assert browser.in_browser_mode is False
+
+
+@pytest.mark.parametrize("misheard", ["number", "numbers", "links"])
+@patch.object(browser, "handle_browser_command")
+@patch("time.sleep")
+@patch.object(browser, "qb")
+def test_listen_for_hint_reissues_on_a_repeated_trigger(
+    mock_qb, mock_sleep, mock_handle_cmd, misheard, mock_core_factory
+):
+    """Asking for hints again means none appeared, so show them again.
+
+    qutebrowser's :hint fails outright on some pages ("Unknown error while getting
+    elements"), and the user simply repeats themselves. Treating that as "they're
+    already showing" left the listener waiting for a number against a blank page.
+    """
+    mock_core = mock_core_factory(
+        wait_for_speech_values=[b"audio1", *[None] * 8],
+        transcribe_values=[misheard, None],
+    )
+
+    browser.listen_for_hint(mock_core)
+
+    sent = [call.args[0] for call in mock_qb.call_args_list]
+    assert "hint" in sent
+    # Escaped first: hinting on top of a half-open hint mode is what breaks it.
+    assert sent.index("fake-key <Escape>") < sent.index("hint")
+    assert not mock_handle_cmd.called
+
+
+@patch.object(browser, "handle_browser_command")
+@patch("time.sleep")
+@patch.object(browser, "qb")
+def test_listen_for_hint_gives_up_on_a_page_without_hints(
+    mock_qb, mock_sleep, mock_handle_cmd, mock_core_factory, readlog
+):
+    """A page where hints never render must not retry without end."""
+    mock_core = mock_core_factory(
+        wait_for_speech_values=[b"a"] * 12, transcribe_values=["numbers"] * 12
+    )
+
+    browser.listen_for_hint(mock_core)
+
+    assert mock_core.transcribe.call_count == 4  # the first plus three retries
+    assert "aren't appearing on this page" in readlog().out
+
+
+@pytest.mark.parametrize(
+    ["probe_result", "expected"],
+    [(Mock(returncode=0), "both"), (Mock(returncode=1), "hosts")],
+)
+@patch("subprocess.run")
+def test_adblock_method_follows_what_is_installed(mock_run, probe_result, expected):
+    """ "both" catches ad overlays, but only when python-adblock is there.
+
+    Without it qutebrowser complains on every page load, which is worse than the
+    ads. Probing means installing it later is picked up on the next start with
+    nothing for the user to edit.
+    """
+    mock_run.return_value = probe_result
+
+    assert browser.adblock_method() == expected
+
+
+@patch("subprocess.run", side_effect=OSError("no python3"))
+def test_adblock_method_without_an_interpreter(mock_run):
+    """No way to probe means assume the dependency isn't there."""
+    assert browser.adblock_method() == "hosts"
+
+
+@patch.object(browser, "adblock_method", return_value="both")
+def test_config_updates_a_setting_in_place(mock_method, tmp_path, monkeypatch):
+    """A changed setting replaces the old value rather than stacking on it.
+
+    Both would work, since the last assignment wins, but the file would grow a new
+    line every time a setting changed -- the user's config being made a mess of.
+    """
+    cfg = tmp_path / ".config" / "qutebrowser" / "config.py"
+    cfg.parent.mkdir(parents=True)
+    cfg.write_text(
+        "# mine\nc.colors.webpage.darkmode.enabled = True\n"
+        "c.content.blocking.method = 'hosts'\n"
+    )
+    monkeypatch.setattr(browser.Path, "home", lambda: tmp_path)
+
+    browser.ensure_qutebrowser_config()
+
+    text = cfg.read_text()
+    assert text.count("c.content.blocking.method") == 1
+    assert "c.content.blocking.method = 'both'" in text
+    assert "c.colors.webpage.darkmode.enabled = True" in text  # left alone
+    assert "# mine" in text
+
+
+@patch.object(browser, "adblock_method", return_value="hosts")
+def test_config_is_left_alone_when_already_right(mock_method, tmp_path, monkeypatch):
+    """Nothing is rewritten when every setting already has the wanted value."""
+    cfg = tmp_path / ".config" / "qutebrowser" / "config.py"
+    cfg.parent.mkdir(parents=True)
+    cfg.write_text("\n".join(browser.required_qutebrowser_lines()) + "\n")
+    monkeypatch.setattr(browser.Path, "home", lambda: tmp_path)
+    before = cfg.read_text()
+
+    browser.ensure_qutebrowser_config()
+
+    assert cfg.read_text() == before
+
+
+# --- Hinting after a history navigation ---------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _forget_navigation():
+    """Start each test with no pending reload."""
+    browser._needs_reload_before_page_js = False
+    yield
+    browser._needs_reload_before_page_js = False
+
+
+@pytest.mark.parametrize("command", ["back", "go back", "forward", "next page"])
+@patch("time.sleep")
+@patch.object(browser, "listen_for_hint")
+@patch.object(browser, "qb")
+def test_hints_reload_after_a_history_navigation(
+    mock_qb, mock_listen, mock_sleep, command, mock_core
+):
+    """Going back leaves the page unhintable until it genuinely loads again.
+
+    qutebrowser enumerates hintable elements with JS injected on page load, and a
+    history navigation restores from cache without one -- so :hint failed with
+    "Unknown error while getting elements" every time. A sleep doesn't help; only
+    a real load does.
+    """
+    browser.handle_browser_command(command, mock_core)
+    browser.handle_browser_command("numbers", mock_core)
+
+    sent = [call.args[0] for call in mock_qb.call_args_list]
+    assert sent.index("reload") < sent.index("hint")
+
+
+@patch("time.sleep")
+@patch.object(browser, "listen_for_hint")
+@patch.object(browser, "qb")
+def test_hints_do_not_reload_without_a_navigation(
+    mock_qb, mock_listen, mock_sleep, mock_core
+):
+    """A page that loaded normally is hintable, so don't throw it away."""
+    browser.handle_browser_command("numbers", mock_core)
+
+    assert "reload" not in [call.args[0] for call in mock_qb.call_args_list]
+
+
+@patch("time.sleep")
+@patch.object(browser, "listen_for_hint")
+@patch.object(browser, "qb")
+def test_the_reload_happens_only_once(mock_qb, mock_listen, mock_sleep, mock_core):
+    """One reload restores hinting; asking again shouldn't reload afresh."""
+    browser.handle_browser_command("back", mock_core)
+    browser.handle_browser_command("numbers", mock_core)
+    mock_qb.reset_mock()
+
+    browser.handle_browser_command("numbers", mock_core)
+
+    assert "reload" not in [call.args[0] for call in mock_qb.call_args_list]
+
+
+@patch("time.sleep")
+@patch.object(browser, "qb")
+def test_show_hints_settles_before_hinting(mock_qb, mock_sleep):
+    """A reloaded page needs a moment before its elements can be walked."""
+    browser._needs_reload_before_page_js = True
+
+    browser.show_hints()
+
+    assert mock_sleep.called
+    sent = [call.args[0] for call in mock_qb.call_args_list]
+    assert sent == ["reload", "hint"]
+
+
+# --- Saying it the way people actually say it ---------------------------------
+
+
+@pytest.mark.parametrize(
+    ["command", "expected"],
+    [
+        ("switch tab", ["tab-next"]),
+        ("change tab", ["tab-next"]),
+        ("next tab", ["tab-next"]),
+        ("last tab", ["tab-prev"]),
+        ("tab 1", ["tab-focus 1"]),
+        ("tab one", ["tab-focus 1"]),
+        ("switch to tab 2", ["tab-focus 2"]),
+        ("switch tab three", ["tab-focus 3"]),
+        ("go to tab 2", ["tab-focus 2"]),
+        ("close tab 2", ["tab-focus 2", "tab-close"]),
+        ("close tab", ["tab-close"]),
+    ],
+)
+@patch.object(browser, "qb")
+def test_tab_commands_accept_natural_phrasings(mock_qb, command, expected, mock_core):
+    """There is no reason to make someone remember which phrasing was implemented.
+
+    "go to tab 2" in particular used to be read as a bookmark named "tab 2".
+    """
+    assert browser.handle_browser_command(command, mock_core) is True
+    assert [call.args[0] for call in mock_qb.call_args_list] == expected
+
+
+@pytest.mark.parametrize(
+    ["spoken", "bare"],
+    [
+        ("and scroll down", "jseval"),
+        ("so back", "back"),
+        ("then reload", "reload"),
+        ("okay top", "jseval"),
+    ],
+)
+@patch.object(browser, "qb")
+def test_a_filler_word_does_not_lose_the_command(mock_qb, spoken, bare, mock_core):
+    """Whisper prefixes commands with words the user didn't emphasise.
+
+    Answering "I didn't understand" to "and scroll down" is a poor result for a
+    perfectly clear instruction.
+    """
+    assert browser.handle_browser_command(spoken, mock_core) is True
+    assert bare in mock_qb.call_args.args[0]
+
+
+@pytest.mark.parametrize("command", ["exit links", "exit link"])
+@patch.object(browser, "qb")
+def test_a_stray_hint_phrase_is_absorbed(mock_qb, command, mock_core):
+    """Said a beat after hint mode closed, and owned by this plugin either way."""
+    assert browser.handle_browser_command(command, mock_core) is True
+    assert not mock_qb.called
+
+
+# --- Saying what just happened ------------------------------------------------
+#
+# Away from a terminal these transitions were silent, so there was no way to know
+# which mode was listening. Each phrase is deliberately not one of the words that
+# would re-trigger the mode it announces: the microphone hears every reply.
+
+
+@patch("time.sleep")
+@patch.object(browser, "qb")
+def test_hint_mode_announces_itself(mock_qb, mock_sleep, mock_core_factory):
+    """Hints appearing on screen is invisible to someone not looking at it."""
+    mock_core = mock_core_factory(
+        wait_for_speech_values=[b"a"], transcribe_values=["six"]
+    )
+
+    browser.listen_for_hint(mock_core)
+
+    assert mock_core.speak.call_args_list[0].args[0] == "Ready"
+
+
+@patch("time.sleep")
+@patch.object(browser, "qb")
+def test_the_announcement_is_not_a_hint_trigger(mock_qb, mock_sleep, mock_core_factory):
+    """Announcing "Numbers" would come back as a fresh request for numbers."""
+    mock_core = mock_core_factory(
+        wait_for_speech_values=[b"a"], transcribe_values=["six"]
+    )
+
+    browser.listen_for_hint(mock_core)
+
+    spoken = mock_core.speak.call_args_list[0].args[0].lower()
+    assert not any(trigger in spoken for trigger in browser.HINT_TRIGGERS)
+
+
+@patch("time.sleep")
+@patch.object(browser, "qb")
+def test_hints_cancelled_is_announced(mock_qb, mock_sleep, mock_core_factory):
+    """Cancelling leaves nothing on screen to indicate it happened."""
+    mock_core = mock_core_factory(
+        wait_for_speech_values=[b"a"], transcribe_values=["cancel"]
+    )
+
+    browser.listen_for_hint(mock_core)
+
+    assert "Hints closed" in [c.args[0] for c in mock_core.speak.call_args_list]
+
+
+@patch("time.sleep")
+@patch.object(browser, "qb")
+def test_a_page_without_hints_is_announced(mock_qb, mock_sleep, mock_core_factory):
+    """Otherwise it looks identical to the command being ignored."""
+    mock_core = mock_core_factory(
+        wait_for_speech_values=[b"a"] * 12, transcribe_values=["numbers"] * 12
+    )
+
+    browser.listen_for_hint(mock_core)
+
+    assert "No hints on this page" in [
+        c.args[0] for c in mock_core.speak.call_args_list
+    ]
+
+
+@patch("time.sleep")
+@patch.object(browser, "listen_for_hint")
+@patch.object(browser, "qb")
+def test_the_reload_is_announced(mock_qb, mock_listen, mock_sleep, mock_core):
+    """A reload is a pause with no explanation unless one is given."""
+    browser.handle_browser_command("back", mock_core)
+    browser.handle_browser_command("numbers", mock_core)
+
+    assert "Reloading" in [c.args[0] for c in mock_core.speak.call_args_list]
+
+
+@pytest.mark.parametrize("command", ["scroll down", "scroll up", "top", "bottom"])
+@patch("time.sleep")
+@patch.object(browser, "qb")
+def test_scrolling_reloads_after_a_history_navigation(
+    mock_qb, mock_sleep, command, mock_core
+):
+    """Scrolling runs JavaScript too, and a restored page has none of it.
+
+    Hinting was fixed with a reload and scrolling was left behind, so after going
+    back "scroll down" simply did nothing, several times in a row, with no error.
+    """
+    browser.handle_browser_command("back", mock_core)
+    browser.handle_browser_command(command, mock_core)
+
+    sent = [call.args[0] for call in mock_qb.call_args_list]
+    assert sent.index("reload") < next(
+        i for i, cmd in enumerate(sent) if cmd.startswith("jseval")
+    )
+
+
+@patch("time.sleep")
+@patch.object(browser, "qb")
+def test_scrolling_reloads_only_once(mock_qb, mock_sleep, mock_core):
+    """One reload restores the page's scripts for hinting and scrolling alike."""
+    browser.handle_browser_command("back", mock_core)
+    browser.handle_browser_command("scroll down", mock_core)
+    mock_qb.reset_mock()
+
+    browser.handle_browser_command("scroll down", mock_core)
+
+    assert "reload" not in [call.args[0] for call in mock_qb.call_args_list]
+
+
+@patch("time.sleep")
+@patch.object(browser, "listen_for_hint")
+@patch.object(browser, "qb")
+def test_one_reload_serves_both_hinting_and_scrolling(
+    mock_qb, mock_listen, mock_sleep, mock_core
+):
+    """Scrolling after a back shouldn't leave hinting to reload all over again."""
+    browser.handle_browser_command("back", mock_core)
+    browser.handle_browser_command("scroll down", mock_core)
+    mock_qb.reset_mock()
+
+    browser.handle_browser_command("numbers", mock_core)
+
+    assert "reload" not in [call.args[0] for call in mock_qb.call_args_list]
+
+
+@pytest.mark.parametrize(
+    ["spoken", "digit"],
+    [
+        ("four", "4"),
+        ("for", "4"),
+        ("ford", "4"),
+        ("forth", "4"),
+        ("far", "4"),
+        ("third", "3"),
+        ("eighth", "8"),
+        ("ninth", "9"),
+    ],
+)
+def test_digit_homophones(spoken, digit):
+    """Whisper rarely returns the dictionary spelling of a spoken digit."""
+    assert browser.parse_hint_number(spoken) == digit

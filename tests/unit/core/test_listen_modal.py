@@ -631,3 +631,38 @@ class TestSilentExits:
         spoken = easy.speech.speak.call_args.args[0]
         assert "Leaving grid" in spoken
         assert main.WAKE_WORD_SPOKEN in spoken
+
+
+class TestWakeWordStripping:
+    """Only a leading wake word is removed."""
+
+    @pytest.mark.parametrize(
+        ["spoken", "expected"],
+        [
+            ("hey jarvis, numbers", "numbers"),
+            ("hey jarvis numbers", "numbers"),
+            ("jarvis, back", "back"),
+            ("Hey Jarvis", ""),
+            ("grid", "grid"),
+        ],
+    )
+    def test_a_leading_wake_word_is_removed(self, spoken, expected):
+        """Users say it out of habit inside a mode that is already listening."""
+        assert main.strip_wake_words(spoken) == expected
+
+    @pytest.mark.parametrize(
+        "spoken",
+        [
+            "search jarvis",
+            "find jarvis on the page",
+            "go to jarvis.dot.com",
+            "search for hey jarvis",
+        ],
+    )
+    def test_the_word_is_kept_when_it_is_content(self, spoken):
+        """Replacing every occurrence ate the word out of the middle of a command.
+
+        "search jarvis" became "search", and a URL containing it lost part of
+        itself.
+        """
+        assert main.strip_wake_words(spoken) == spoken

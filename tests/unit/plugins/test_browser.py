@@ -1747,3 +1747,60 @@ def test_one_reload_serves_both_hinting_and_scrolling(
 def test_digit_homophones(spoken, digit):
     """Whisper rarely returns the dictionary spelling of a spoken digit."""
     assert browser.parse_hint_number(spoken) == digit
+
+
+# --- Review follow-ups --------------------------------------------------------
+
+
+@patch("subprocess.run")
+def test_adblock_probe_falls_through_to_the_system_interpreter(mock_run):
+    """A bare `python3` is the venv's own, which never has a distro package.
+
+    Probing only that concludes python-adblock is missing on exactly the setup
+    most likely to have it installed system-wide.
+    """
+    mock_run.side_effect = lambda cmd, **_kw: Mock(
+        returncode=0 if cmd[0] == "/usr/bin/python3" else 1
+    )
+
+    assert browser.adblock_method() == "both"
+
+
+@patch("subprocess.run", side_effect=OSError("no such interpreter"))
+def test_adblock_probe_skips_interpreters_that_are_not_there(mock_run):
+    """A candidate that isn't installed is skipped, not raised."""
+    assert browser.adblock_method() == "hosts"
+
+
+@pytest.mark.parametrize(
+    ["line", "expected"],
+    [
+        ("c.foo = 'bar'", "c.foo"),
+        ("c.foo='bar'", "c.foo"),
+        ("c.foo  =  'bar'", "c.foo"),
+        ("  c.foo = 'bar'", "c.foo"),
+        ("config.load_autoconfig(False)", None),
+        ("# c.foo = 'bar'", None),
+        ("", None),
+    ],
+)
+def test_setting_name_tolerates_the_users_own_spacing(line, expected):
+    """Missing an existing setting appends a duplicate on every start."""
+    assert browser._setting_name(line) == expected
+
+
+@patch.object(browser, "adblock_method", return_value="hosts")
+def test_config_updates_settings_written_with_other_spacing(
+    mock_method, tmp_path, monkeypatch
+):
+    """A config the user wrote by hand is updated in place, not added to."""
+    cfg = tmp_path / ".config" / "qutebrowser" / "config.py"
+    cfg.parent.mkdir(parents=True)
+    cfg.write_text("c.hints.chars='abc'\nc.content.autoplay   =   True\n")
+    monkeypatch.setattr(browser.Path, "home", lambda: tmp_path)
+
+    browser.ensure_qutebrowser_config()
+
+    text = cfg.read_text()
+    assert text.count("c.hints.chars") == 1
+    assert text.count("c.content.autoplay") == 1

@@ -183,6 +183,14 @@ REQUIRED_QUTEBROWSER_LINES = [
 ]
 
 
+# Interpreters to ask about python-adblock, in order. A bare `python3` resolves to
+# the virtualenv's own interpreter when one is active, which never has a distro
+# package installed -- so asking only that concludes the dependency is missing on
+# exactly the setup most likely to have it. (The AT-SPI helper in the dictation
+# plugin probes the same way, for the same reason.)
+ADBLOCK_CANDIDATES = ("python3", "/usr/bin/python3", "/usr/bin/python")
+
+
 def adblock_method():
     """Return the strongest ad-blocking method this system can actually run.
 
@@ -196,13 +204,16 @@ def adblock_method():
     Probed rather than assumed, so installing python-adblock later is picked up on
     the next start with nothing for the user to edit.
     """
-    try:
-        probe = subprocess.run(
-            ["python3", "-c", "import adblock"], capture_output=True, check=False
-        )
-    except OSError:
-        return "hosts"
-    return "both" if probe.returncode == 0 else "hosts"
+    for candidate in ADBLOCK_CANDIDATES:
+        try:
+            probe = subprocess.run(
+                [candidate, "-c", "import adblock"], capture_output=True, check=False
+            )
+        except OSError:
+            continue  # no such interpreter; try the next
+        if probe.returncode == 0:
+            return "both"
+    return "hosts"
 
 
 def required_qutebrowser_lines():
@@ -214,9 +225,14 @@ def required_qutebrowser_lines():
 
 
 def _setting_name(line):
-    """The `c.…` setting a config line assigns, or None if it isn't an assignment."""
-    name, _, value = line.partition(" = ")
-    return name if value and name.startswith("c.") else None
+    """The `c.…` setting a config line assigns, or None if it isn't an assignment.
+
+    Matched with a pattern rather than a literal `" = "` so a user's own spacing --
+    `c.foo='bar'` or `c.foo  =  'bar'` -- is still recognised. Missing it would
+    append a second assignment for the same setting on every start.
+    """
+    match = re.match(r"^\s*(c\.[^=\s]+)\s*=\s*\S", line)
+    return match.group(1) if match else None
 
 
 def ensure_qutebrowser_config():

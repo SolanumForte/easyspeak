@@ -66,10 +66,23 @@ WAKE_PREFIXES = (
 
 
 def strip_wake_words(cmd):
-    """Remove any spoken wake word and surrounding punctuation from a command."""
-    cmd = cmd.lower()
-    for wake in WAKE_PREFIXES:
-        cmd = cmd.replace(wake, "").strip()
+    """Remove a leading spoken wake word and surrounding punctuation.
+
+    Only a prefix is removed. Replacing every occurrence anywhere in the utterance
+    -- which is what this did -- eats the word out of the middle of a command, so
+    "search jarvis" became "search" and a URL containing it lost part of itself.
+    Longest prefix first, so "hey jarvis," is matched before "jarvis".
+    """
+    cmd = cmd.lower().strip()
+    for wake in sorted(WAKE_PREFIXES, key=len, reverse=True):
+        if cmd == wake:
+            return ""
+        if cmd.startswith(wake):
+            rest = cmd[len(wake) :]
+            # Only a prefix if a word actually ends here.
+            if not rest or rest[0] in " ,.!?":
+                cmd = rest.strip()
+                break
     return cmd.strip(".,!? ")
 
 

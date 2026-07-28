@@ -67,12 +67,12 @@ the config module yourself:
 
 ```python
 config.load_autoconfig(False)
-c.hints.chars = '0123456789'
-c.content.tls.certificate_errors = 'ask-block-thirdparty'
+c.hints.chars = "0123456789"
+c.content.tls.certificate_errors = "ask-block-thirdparty"
 c.content.notifications.enabled = False
 c.content.geolocation = False
 c.content.autoplay = False
-c.content.blocking.method = 'hosts'
+c.content.blocking.method = "hosts"
 ```
 
 The last four answer prompts and block distractions that voice cannot dismiss: a

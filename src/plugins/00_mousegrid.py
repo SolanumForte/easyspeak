@@ -7,7 +7,6 @@ Features:
 """
 
 import atexit
-import contextlib
 import logging
 import re
 import subprocess
@@ -183,8 +182,29 @@ def get_screen_size():
     return 1920, 1080
 
 
+def _release_pending_drag():
+    """Release a drag left in progress, so no exit path leaves the button down.
+
+    `mark` presses the primary button and holds it while the user navigates to the
+    drop target. Every way out of grid mode other than `drag` — closing, clicking,
+    the new idle timeout, a tray sleep — returned without a matching release, which
+    left the primary button pressed compositor-wide and turned every subsequent
+    pointer move into a drag.
+    """
+    global drag_start
+    if drag_start is None:
+        return
+    logger.debug("  → Releasing drag left in progress")
+    # After close_grid() there are no bounds to take a centre from; releasing at
+    # the press point is the least surprising fallback.
+    x, y = get_center() or drag_start
+    dbus_call("EndDrag", x, y)
+    drag_start = None
+
+
 def cleanup():
     """Hide the grid on interpreter exit so no overlay is left on screen."""
+    _release_pending_drag()
     dbus_call("Hide")
 
 
@@ -471,33 +491,51 @@ def handle(cmd, core):
 
 
 def listen_for_grid_commands(core):
-    """Continuous listening while grid active."""
+    """Handle grid commands until the grid closes or the mode ends.
+
+    Core owns the listening loop (see
+    [`listen_modal`][core.main.EasySpeak.listen_modal]) so the tray stays responsive
+    while the grid holds the microphone, and an
+    unattended grid times out instead of trapping the session. Any drag still in
+    progress is released on the way out, so a timeout can't leave the mouse button
+    held down.
+    """
     global grid_active, drag_start
+
+    if not grid_active:
+        return  # the grid never opened (no extension); nothing to listen for
 
     logger.info("Grid mode: say numbers (e.g. '3 7 5'), nudge, scroll, click, close")
 
-    while grid_active:
-        with contextlib.suppress(Exception):
-            core.stream.read(
-                core.stream.get_read_available(), exception_on_overflow=False
-            )
+    try:
+        _run_grid_mode(core)
+    finally:
+        # Covers every way out: close, click, drag, an idle timeout, or the tray
+        # taking the session away mid-mode. The drag is released first, while the
+        # bounds it needs for a release point still exist.
+        _release_pending_drag()
+        if grid_active:
+            # The mode ended without a command that closes the grid (idle timeout,
+            # tray sleep, quit). The daemon has already gone back to the wake word,
+            # so an overlay left drawn would sit over the desktop with nothing
+            # listening for it.
+            logger.debug("  → Hiding grid left open by an ended mode")
+            close_grid()
 
-        first = core.wait_for_speech(timeout=10)
-        if not first:
-            continue
 
-        audio = first + core.record_until_silence()
-        cmd = core.transcribe(
-            audio,
-            prompt=(
-                "one two three four five six seven eight nine click double "
-                "right scroll nudge up down left right close cancel mark drag"
-            ),
-        )
-        if not cmd:
-            continue
+def _run_grid_mode(core):
+    """Dispatch one grid command per utterance until the mode ends."""
+    global grid_active, drag_start
 
-        cmd_lower = cmd.lower().strip()
+    for cmd_lower in core.listen_modal(
+        "grid",
+        prompt=(
+            "one two three four five six seven eight nine click double "
+            "right scroll nudge up down left right close cancel mark drag"
+        ),
+        timeout=10,
+        idle_timeout=30,
+    ):
         logger.debug("  ← %s", cmd_lower)
 
         # === Exit ===
@@ -515,15 +553,20 @@ def listen_for_grid_commands(core):
             ]
         ):
             close_grid()
+            core.speak("Grid closed")
             logger.info("Grid closed")
             return
 
         # === Drag ===
         if "mark" in cmd_lower:
             start_drag()
+            # "Holding", not "Marked": grid mode is still listening and "mark"
+            # inside the reply would start a second drag.
+            core.speak("Holding")
             continue
         if "drag" in cmd_lower and drag_start:
             end_drag()
+            core.speak("Dropped")
             return
 
         # === Scroll ===
@@ -531,6 +574,7 @@ def listen_for_grid_commands(core):
             direction = parse_direction(cmd_lower)
             if direction:
                 do_scroll(direction, parse_count(cmd_lower))
+                core.speak("Scrolled")
                 return
             continue
 
@@ -539,17 +583,21 @@ def listen_for_grid_commands(core):
 
         if "double" in cmd_lower:
             do_click("double")
+            core.speak("Double clicked")
             return
         if "middle" in cmd_lower:
             do_click("middle")
+            core.speak("Middle clicked")
             return
         if has_click and any(
             w in cmd_lower for w in ["right", "write", "rite", "wright"]
         ):
             do_click("right")
+            core.speak("Right clicked")
             return
         if has_click:
             do_click("click")
+            core.speak("Clicked")
             return
 
         # === Nudge ===

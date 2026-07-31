@@ -69,8 +69,10 @@ Requires a webcam and additional dependencies — see [Installation](installatio
 | zero two | Click hint 02 |
 | new tab | Open new tab |
 | close tab | Close current tab |
-| tab left/right | Switch tabs |
-| tab [number] | Jump to specific tab |
+| next tab / switch tab | Go to the next tab |
+| last tab / previous tab | Go to the previous tab |
+| tab [number] | Switch to a tab by number |
+| close tab [number] | Close a tab by number |
 | undo tab | Restore closed tab |
 | back / forward | Navigate history |
 | reload | Refresh page |
@@ -94,7 +96,14 @@ Requires a webcam and additional dependencies — see [Installation](installatio
     Built-in bookmarks: youtube, google, gmail, github, reddit, twitter,
     facebook, amazon, netflix, duckduckgo.
 
+Commands may start with a filler word — "and scroll down", "so back" — which is
+stripped before matching, since Whisper adds them.
+
 ## Dictation
+
+Dictation places text by pasting it, which needs `wl-clipboard` (Wayland) or
+`xclip` (X11) installed, and needs a text field focused. In the browser, use
+`numbers` and pick the hint on the field first.
 
 | Command | Action |
 |---------|--------|
@@ -156,10 +165,10 @@ Folders open in whatever file manager your desktop is configured for (via
 
 | Command | Action |
 |---------|--------|
-| play | Resume playback |
+| play / resume | Resume playback |
 | pause / stop the music | Pause playback |
 | next / skip | Next track |
-| previous / back | Previous track |
+| previous | Previous track |
 
 ## System
 
@@ -173,6 +182,18 @@ Folders open in whatever file manager your desktop is configured for (via
 
 Volume changes are silent — GNOME's own on-screen display and chime acknowledge
 them.
+
+## Knowing which mode is listening
+
+Modes announce themselves, so you don't need a terminal to follow along:
+"Browser", "Grid", "Dictation", "Ready" when link hints appear, "Clicked",
+"Holding" and "Dropped" while dragging, "Hints closed", "Left the browser".
+
+Modes also end on their own after a spell with no recognised command — 30 seconds
+for the grid and head tracking, a minute for dictation, three minutes for the
+browser. When one does, you'll hear what changed:
+
+> "Leaving browser. Say Hey Jarvis to continue."
 
 ## General
 

@@ -10,8 +10,8 @@ Areas that need work:
 
 ## Planned Enhancements
 
-- Window controls (maximize, minimize)
-- Dictation focus detection fix
+- Window controls (maximize, minimize) — the GNOME extension already exposes
+  them over D-Bus; no plugin drives them yet
 - Further GNOME integration for desktop control
 - Verbal help per section (say "help browser" for spoken commands)
 - Auto-discover installed apps for launcher

@@ -1,16 +1,31 @@
 """Dictation Plugin - Voice to text via AT-SPI."""
 
+import ast
+import json
 import logging
 import os
 import re
 import shutil
 import subprocess
+import threading
+import time
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 NAME = "dictation"
 DESCRIPTION = "Voice dictation into any text field"
+
+# Recording limits for a sentence rather than a command. Core's defaults assume a
+# few words: a third of a second of quiet ends the recording and nothing past five
+# seconds is captured at all -- so dictation stopped listening during the pause in
+# the middle of a sentence, and cut off anyone who kept talking.
+#
+# The pause is a direct trade: too short and it cuts in mid-sentence, too long and
+# every phrase lags before it appears. 0.7s clears a normal breath while keeping
+# the wait after speaking short enough not to be felt as a delay.
+MAX_RECORD_SECONDS = 20.0
+SILENCE_DURATION = 0.7
 
 COMMANDS = [
     "notes - start dictation mode (say 'stop notes' to end)",
@@ -96,24 +111,469 @@ BACKEND_ERROR = "backend_error"
 ATSPI_HELPER = str(Path(__file__).with_name("_atspi_insert.py"))
 
 
-def atspi_python():
-    """Path to the interpreter that runs the AT-SPI helper.
+# Every way of saying "finish dictating", generated rather than hand-listed. The
+# list used to be written out by hand and had gaps: "stop notes" and "stop note"
+# were both there, but only "close notes" -- so saying "close note" stayed in
+# dictation and typed the words instead, along with every command spoken after it.
+# The nouns include Whisper's usual mishearings of "notes".
+EXIT_VERBS = ("stop", "close", "closed", "end", "exit", "done", "finish", "quit")
+EXIT_NOUNS = (
+    "notes",
+    "note",
+    "nots",
+    "nurts",
+    "nuts",
+    "knots",
+    "notice",
+)
+EXIT_PHRASES = frozenset(
+    f"{verb} {noun}" for verb in EXIT_VERBS for noun in EXIT_NOUNS
+) | frozenset(f"{verb}{noun}" for verb in EXIT_VERBS for noun in EXIT_NOUNS)
 
-    The helper needs PyGObject and the AT-SPI typelib, which the app's own venv usually
-    lacks. `EASYSPEAK_ATSPI_PYTHON` lets the packaging point at an interpreter that has
-    them (the Nix flake sets it); otherwise we fall back to the system `python3`, where
-    distro packages like `python3-gi` typically live.
+
+def is_exit_phrase(text):
+    """Whether a dictated utterance asks to leave dictation mode."""
+    return any(phrase in text for phrase in EXIT_PHRASES)
+
+
+# --- Insertion ---------------------------------------------------------------
+#
+# Text reaches an application by clipboard and paste, not by accessibility-level
+# insertion. Every toolkit implements paste; AT-SPI insertion is widely stubbed
+# out -- Chromium-based apps (qutebrowser, Electron) accept the call, report
+# success, and discard the text, so dictation transcribed perfectly and nothing
+# appeared. Pasting needs no per-application knowledge, which is the point: the
+# alternative was a table of toolkit quirks that grows forever.
+
+# evdev keycodes for the paste chord (stable Linux input ABI).
+KEYCODES = {
+    "ctrl": 29,
+    "shift": 42,
+    "alt": 56,
+    "super": 125,
+    "insert": 110,
+    "v": 47,
+}
+
+DEFAULT_PASTE_CHORD = "ctrl+v"
+
+# Terminals paste with Ctrl+Shift+V, since Ctrl+V is a control character there.
+# A short, stable list -- unlike the toolkit table this design replaced.
+TERMINAL_PASTE_CHORD = "ctrl+shift+v"
+TERMINAL_WM_CLASSES = frozenset(
+    {
+        "alacritty",
+        "com.raggesilver.blackbox",
+        "contour",
+        "foot",
+        "ghostty",
+        "gnome-terminal-server",
+        "guake",
+        "kitty",
+        "konsole",
+        "org.gnome.console",
+        "org.gnome.terminal",
+        "org.wezfurlong.wezterm",
+        "terminator",
+        "tilix",
+        "xterm",
+    }
+)
+
+# How long a clipboard tool gets before it is treated as broken.
+CLIPBOARD_TIMEOUT = 2.0
+
+# How long to let the paste land before the previous clipboard is put back. Long
+# enough for a local paste, short enough not to be felt between utterances.
+CLIPBOARD_SETTLE = 0.15
+
+# Sentinel for "the caller didn't look up the focused window", so None can still
+# mean "looked, and there wasn't one".
+UNKNOWN = object()
+
+# Bumped on every insertion. The background restore checks it so a slow restore
+# can't overwrite text a later utterance has since put on the clipboard.
+_clipboard_generation = 0
+
+# Reading the focused window costs a gdbus round trip, so cap it rather than let
+# a wedged session bus stall every utterance.
+WINDOW_QUERY_TIMEOUT = 2.0
+
+
+def focused_wm_class():
+    """Return the focused window's WM class, or None if it can't be read.
+
+    Asks the bundled GNOME extension, the same way the mouse grid asks it for the
+    screen size. Only used to pick the paste chord, so any failure simply means
+    the default one.
     """
-    return os.environ.get("EASYSPEAK_ATSPI_PYTHON") or "python3"
+    try:
+        result = subprocess.run(
+            [
+                "gdbus",
+                "call",
+                "--session",
+                "--dest",
+                "org.gnome.Shell",
+                "--object-path",
+                "/org/easyspeak/Desktop",
+                "--method",
+                "org.easyspeak.Desktop.GetWindows",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=WINDOW_QUERY_TIMEOUT,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    try:
+        # gdbus wraps the reply in GVariant tuple syntax: ('<json>',)
+        payload = ast.literal_eval(result.stdout.strip())[0]
+        windows = json.loads(payload)
+    except (SyntaxError, ValueError, IndexError, TypeError):
+        return None
+    focused = next((w for w in windows if w.get("focused")), None)
+    return focused.get("wm_class") if focused else None
+
+
+def paste_chord(wm_class=UNKNOWN):
+    """Return the evdev keycodes for the paste chord to send.
+
+    `wm_class` is the focused window if the caller already looked it up; reading it
+    again costs a gdbus round trip on the path between speaking and seeing text.
+
+    `EASYSPEAK_PASTE_KEYS` overrides it outright (e.g. `shift+insert`); otherwise
+    terminals get Ctrl+Shift+V and everything else Ctrl+V. An unknown key name in
+    the override is reported and the default used, rather than silently sending a
+    chord that does nothing.
+    """
+    override = os.environ.get("EASYSPEAK_PASTE_KEYS", "").strip().lower()
+    if override:
+        codes = [KEYCODES.get(part.strip()) for part in override.split("+")]
+        if all(codes):
+            return codes
+        logger.warning(
+            "Ignoring EASYSPEAK_PASTE_KEYS=%r: unknown key. Known keys: %s.",
+            override,
+            ", ".join(sorted(KEYCODES)),
+        )
+    if wm_class is UNKNOWN:
+        wm_class = focused_wm_class()
+    chord = (
+        TERMINAL_PASTE_CHORD if wm_class in TERMINAL_WM_CLASSES else DEFAULT_PASTE_CHORD
+    )
+    return [KEYCODES[part] for part in chord.split("+")]
+
+
+def clipboard_tools():
+    """Return the (copy, paste) commands for this session, or (None, None).
+
+    wl-clipboard on Wayland, xclip on X11. Both are ordinary desktop packages;
+    without either there is no way to put text on the clipboard.
+    """
+    if shutil.which("wl-copy") and shutil.which("wl-paste"):
+        return ["wl-copy"], ["wl-paste", "--no-newline"]
+    if shutil.which("xclip"):
+        return (
+            ["xclip", "-selection", "clipboard"],
+            ["xclip", "-selection", "clipboard", "-o"],
+        )
+    return None, None
+
+
+def read_clipboard(paste_cmd):
+    """Return the current clipboard text, or None if there isn't any.
+
+    Read as bytes and decoded here rather than by `subprocess`, because the
+    clipboard often isn't text at all -- a copied image arrives as PNG bytes, and
+    decoding those as UTF-8 raised straight out of the middle of an insertion and
+    killed dictation mid-sentence.
+
+    Non-text content simply isn't preserved: the dictated text still gets pasted,
+    but whatever was on the clipboard is gone afterwards. Restoring arbitrary
+    binary would mean tracking MIME types through both tools, which is a lot of
+    machinery for something a user rarely notices.
+    """
+    try:
+        result = subprocess.run(
+            paste_cmd, capture_output=True, check=False, timeout=CLIPBOARD_TIMEOUT
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    try:
+        return result.stdout.decode("utf-8")
+    except UnicodeDecodeError:
+        logger.debug("clipboard holds non-text data; it won't be restored")
+        return None
+
+
+def write_clipboard(copy_cmd, text):
+    """Put text on the clipboard; False if that failed.
+
+    Output goes to /dev/null rather than a pipe. `wl-copy` forks a daemon to hold
+    the selection for as long as it owns it, and that daemon inherits whatever
+    pipes we hand the parent -- so capturing output makes `subprocess.run` wait on
+    a process that never exits (CPython bpo-37424). Every copy timed out, and
+    dictation reported that it couldn't reach the clipboard.
+    """
+    try:
+        result = subprocess.run(
+            copy_cmd,
+            input=text,
+            text=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=CLIPBOARD_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        logger.warning("%s did not finish within %ss", copy_cmd[0], CLIPBOARD_TIMEOUT)
+        return False
+    except OSError as exc:
+        logger.warning("could not run %s: %s", copy_cmd[0], exc)
+        return False
+    if result.returncode != 0:
+        logger.warning("%s exited with code %s", copy_cmd[0], result.returncode)
+        return False
+    return True
+
+
+# Browsers that need to be told to accept keystrokes as text. qutebrowser is
+# modal; most applications are not.
+BROWSER_WM_CLASSES = ("org.qutebrowser.qutebrowser", "qutebrowser")
+
+
+# Set once a paste has put qutebrowser into insert mode, so the mode can be handed
+# back when dictation ends.
+_left_browser_in_insert_mode = False
+
+
+def _qb_command(command):
+    """Send one command to qutebrowser, best-effort."""
+    try:
+        subprocess.run(
+            ["qutebrowser", f":{command}"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=CLIPBOARD_TIMEOUT,
+        )
+        return True
+    except (OSError, subprocess.TimeoutExpired):
+        logger.debug("could not reach qutebrowser for :%s", command)
+        return False
+
+
+def _enter_browser_insert_mode():
+    """Put qutebrowser where a keystroke reaches the page rather than the browser."""
+    global _left_browser_in_insert_mode
+    if _qb_command("mode-enter insert"):
+        _left_browser_in_insert_mode = True
+
+
+def leave_browser_insert_mode():
+    """Hand qutebrowser back in normal mode once dictation is over.
+
+    Insert mode is entered so a paste reaches the page, but leaving the browser in
+    it means every later keystroke is treated as text: hinting and scrolling both
+    misbehave, which looked like dictation breaking the browser on its way out.
+    """
+    global _left_browser_in_insert_mode
+    if not _left_browser_in_insert_mode:
+        return
+    _left_browser_in_insert_mode = False
+    _qb_command("mode-leave")
+
+
+def has_focused_text_field():
+    """Whether anything is focused that could receive text.
+
+    Chromium-based apps accept an AT-SPI insertion and quietly discard it, which
+    is why text goes in by clipboard and paste instead. They do still report which
+    element holds focus, though, so the helper is run with an empty string purely
+    as a question: it finds the insertion point, writes nothing, and says whether
+    there was one.
+
+    Any failure answers yes. A probe that can't run is no reason to refuse to
+    paste -- the old behaviour, blind but willing, is the better fallback.
+    """
+    return insert_via_atspi("") != NO_FOCUS
 
 
 def insert_text(text):
+    """Insert text into the focused application by pasting it.
+
+    The clipboard is put back afterwards, so dictating doesn't quietly cost the
+    user whatever they had copied. Falls back to AT-SPI when no clipboard tool is
+    installed, which is the only case where the old path was ever the better one.
+    """
+    # A paste goes wherever the keyboard is pointing, and if that's a web page
+    # with no field focused it vanishes without a trace -- the keystroke is sent,
+    # the clipboard held the text, and nothing reports a problem. Ask first, so
+    # the user is told rather than left wondering.
+    if not has_focused_text_field():
+        return NO_FOCUS
+
+    copy_cmd, paste_cmd = clipboard_tools()
+    if copy_cmd is None:
+        logger.warning(
+            "No clipboard tool found, so dictation is falling back to AT-SPI, "
+            "which Chromium-based apps accept and ignore. Install wl-clipboard "
+            "(Wayland) or xclip (X11) for text to reach the browser."
+        )
+        return insert_via_atspi(text)
+
+    global _clipboard_generation
+
+    # Looked up once and passed on. This used to be read three separate times per
+    # insertion -- once to pick the chord and twice for the log lines -- and each
+    # one is a gdbus round trip sitting between the user speaking and the text
+    # appearing.
+    target = focused_wm_class()
+
+    saved = read_clipboard(paste_cmd)
+    if not write_clipboard(copy_cmd, text):
+        logger.warning("Could not put the dictated text on the clipboard.")
+        return BACKEND_ERROR
+
+    _clipboard_generation += 1
+    chord = paste_chord(target)
+
+    # qutebrowser is modal: in normal mode a keystroke is a command, not text, and
+    # Ctrl+V isn't bound there at all -- the paste simply goes nowhere. Following a
+    # hint into a field auto-enters insert mode, which is why dictation worked
+    # after "numbers" and silently did nothing without it. Asking for insert mode
+    # first makes it work either way. Safe to send when already in insert.
+    if target in BROWSER_WM_CLASSES:
+        _enter_browser_insert_mode()
+    # Say which mechanism ran and where it aimed. Insertion used to report success
+    # without naming the path it took or the window it targeted, so a paste that
+    # went nowhere looked exactly like one that worked.
+    logger.info(
+        "⌨️  pasting %d chars into %s with %s",
+        len(text),
+        target or "an unknown window",
+        "+".join(
+            next(key for key, code in KEYCODES.items() if code == part)
+            for part in chord
+        ),
+    )
+
+    try:
+        from easyspeak.core import mediakeys
+
+        mediakeys.tap_chord(chord)
+    except Exception:
+        logger.warning(
+            "Could not send the paste keystroke. Dictation needs GNOME's "
+            "RemoteDesktop interface, which this session doesn't provide.",
+            exc_info=True,
+        )
+        return BACKEND_ERROR
+
+    # Name where it went. Paste lands wherever the keyboard focus is, and a page
+    # with no focused field swallows it silently -- so the log has to say which
+    # window received the keystroke, or an empty text box is unexplainable.
+    logger.debug("pasted into %s", target or "an unknown window")
+
+    # The restore waits for the paste to land, so it happens on a thread rather
+    # than in front of the user: this was a fixed delay plus another subprocess
+    # between finishing a sentence and seeing it.
+    _restore_clipboard_later(copy_cmd, saved, _clipboard_generation)
+    return INSERTED
+
+
+def _restore_clipboard_later(copy_cmd, saved, generation):
+    """Put the previous clipboard back once the paste has had time to land."""
+    if saved is None:
+        return  # nothing was there to preserve
+
+    def _restore():
+        time.sleep(CLIPBOARD_SETTLE)
+        if generation == _clipboard_generation:
+            write_clipboard(copy_cmd, saved)
+
+    threading.Thread(target=_restore, daemon=True).start()
+
+
+# Interpreters tried for the AT-SPI helper, in order, when
+# EASYSPEAK_ATSPI_PYTHON isn't set. A bare `python3` comes first because it is
+# usually right -- but inside an activated virtualenv it resolves to the venv's
+# own interpreter, which has no PyGObject, so the distro paths follow as the
+# fallback that actually carries python3-gobject.
+ATSPI_CANDIDATES = ("python3", "/usr/bin/python3", "/usr/bin/python")
+
+# Exactly what the helper does on startup, so a candidate is only accepted if the
+# real import chain works -- PyGObject alone isn't enough without the typelib.
+ATSPI_PROBE = (
+    "import gi; gi.require_version('Atspi', '2.0'); from gi.repository import Atspi"
+)
+
+# Resolved once and remembered; False means "looked and found nothing".
+_atspi_python = None
+
+
+def atspi_python():
+    """Path to an interpreter that can actually run the AT-SPI helper, or None.
+
+    The helper needs PyGObject and the AT-SPI typelib, which the app's own venv
+    usually lacks. `EASYSPEAK_ATSPI_PYTHON` lets the packaging point straight at an
+    interpreter that has them (the Nix flake sets it). Otherwise each candidate is
+    probed with the helper's own import chain and the first that works is kept.
+
+    Falling back to a bare `python3` used to be enough, but only until the daemon
+    was run from an activated virtualenv: `python3` then resolves to the venv's
+    interpreter, which has no PyGObject, and dictation transcribed perfectly and
+    inserted nothing.
+    """
+    global _atspi_python
+    if _atspi_python is None:
+        _atspi_python = _find_atspi_python() or False
+    return _atspi_python or None
+
+
+def _find_atspi_python():
+    """Return the first interpreter that can import AT-SPI, or None."""
+    override = os.environ.get("EASYSPEAK_ATSPI_PYTHON")
+    if override:
+        return override
+    for candidate in ATSPI_CANDIDATES:
+        try:
+            probe = subprocess.run(
+                [candidate, "-c", ATSPI_PROBE], capture_output=True, check=False
+            )
+        except OSError:
+            continue  # no such interpreter; try the next
+        if probe.returncode == 0:
+            logger.debug("dictation will use %s for AT-SPI", candidate)
+            return candidate
+    return None
+
+
+def insert_via_atspi(text):
     """Insert text via AT-SPI.
 
     Returns one of INSERTED, NO_FOCUS or BACKEND_ERROR so the caller can give feedback
     that matches the real cause instead of always blaming focus.
     """
-    cmd = [atspi_python(), ATSPI_HELPER, text]
+    python = atspi_python()
+    logger.info("⌨️  inserting %d chars via AT-SPI (%s)", len(text), python)
+    if python is None:
+        logger.warning(
+            "Dictation needs PyGObject and the AT-SPI typelib, and no interpreter "
+            "on this system has both. Install them (Fedora: sudo dnf install "
+            "python3-gobject at-spi2-core; Debian/Ubuntu: sudo apt install "
+            "python3-gi gir1.2-atspi-2.0), or point EASYSPEAK_ATSPI_PYTHON at an "
+            "interpreter that already does."
+        )
+        return BACKEND_ERROR
+
+    cmd = [python, ATSPI_HELPER, text]
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, check=False)
     except OSError as exc:
@@ -284,8 +744,10 @@ def handle(cmd, core):
     """Enter dictation mode on a whole-word "note"/"notes"; return None otherwise.
 
     Matching whole words (not substrings) keeps unrelated words like "notebook" or
-    "noted" from triggering it. While in dictation mode it loops, transcribing speech
-    and inserting it into the focused field until "stop notes" is heard.
+    "noted" from triggering it. While in dictation mode core drives the listening
+    (see [`listen_modal`][core.main.EasySpeak.listen_modal]), transcribing speech and
+    inserting it into the focused field until "stop notes" is heard — or until the
+    mode ends on its own, so an open microphone can't be left dictating unattended.
     """
     words = cmd.split()
     if ("notes" in words or "note" in words) and "stop" not in words:
@@ -293,49 +755,40 @@ def handle(cmd, core):
 
         logger.info("🎙️ Dictation mode - say 'stop notes' to end")
 
-        while True:
-            # Clear buffer and wait for speech
-            core.stream.read(
-                core.stream.get_read_available(), exception_on_overflow=False
-            )
-            first = core.wait_for_speech(timeout=30)
-
-            if not first:
-                logger.debug("   (waiting...)")
-                continue
-
-            audio = first + core.record_until_silence()
-            text = core.transcribe(audio, prompt=DICTATION_PROMPT)
-
-            if not text:
-                continue
-
-            text = text.strip().lower()
-            logger.debug("   Raw: %s", text)
-
-            # Check for exit - include mishearings
-            if any(
-                x in text
-                for x in [
-                    "stop notes",
-                    "stop note",
-                    "end notes",
-                    "exit notes",
-                    "stop nurts",
-                    "stop nots",
-                    "stop nuts",
-                    "stopnotes",
-                    "done notes",
-                    "finish notes",
-                    "close notes",
-                    "closed notes",
-                ]
-            ):
-                core.speak("Done")
-                return True
-
-            # Format and insert
-            if _dictate_utterance(core, text):
-                return True
+        # Sentence-length recording, not command-length: the command defaults cut
+        # the recording off during a mid-sentence pause and truncated anything
+        # past five seconds.
+        try:
+            return _dictation_session(core)
+        finally:
+            # However the session ended -- "stop notes", an idle timeout, the
+            # tray -- the browser must not be left in insert mode.
+            leave_browser_insert_mode()
 
     return None
+
+
+def _dictation_session(core):
+    """Transcribe and insert until the user stops; see handle().
+
+    Sentence-length recording, not command-length: the command defaults cut the
+    recording off during a mid-sentence pause and truncated anyone who kept going.
+    """
+    for text in core.listen_modal(
+        "dictation",
+        prompt=DICTATION_PROMPT,
+        timeout=30,
+        idle_timeout=60,
+        max_record_seconds=MAX_RECORD_SECONDS,
+        silence_duration=SILENCE_DURATION,
+    ):
+        logger.debug("   Raw: %s", text)
+
+        if is_exit_phrase(text):
+            core.speak("Done")
+            return True
+
+        if _dictate_utterance(core, text):
+            return True
+
+    return True

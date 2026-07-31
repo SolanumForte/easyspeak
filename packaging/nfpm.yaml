@@ -66,6 +66,7 @@ overrides:
     - wireplumber            # wpctl volume control
     - pulseaudio-utils       # paplay (chime + TTS fallback)
     - sound-theme-freedesktop  # wake/error chime sounds
+    - wl-clipboard           # dictation pastes text; xclip on X11
   rpm:
     depends:
     - portaudio
@@ -85,3 +86,4 @@ overrides:
     - wireplumber
     - pulseaudio-utils
     - sound-theme-freedesktop
+    - wl-clipboard           # dictation pastes text; xclip on X11

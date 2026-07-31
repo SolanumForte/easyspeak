@@ -3,7 +3,6 @@
 Uses a 6D rotation representation for smooth head pose estimation.
 """
 
-import contextlib
 import logging
 import math
 import subprocess
@@ -422,35 +421,33 @@ def handle(cmd, core):
 
 
 def listen_for_tracking_commands(core):
-    """Continuous listening while tracking active."""
+    """Handle tracking commands until tracking stops or the mode ends.
+
+    Core owns the listening loop (see
+    [`listen_modal`][core.main.EasySpeak.listen_modal]) so the tray keeps working while
+    tracking holds the microphone. The mode also ends
+    as soon as the tracking thread is gone — a webcam that failed to open used to
+    leave the user in a mode with nothing driving the cursor.
+    """
     global tracking_active, cursor_x, cursor_y, frozen
 
     SCREEN_W, SCREEN_H = get_screen_size()
 
     logger.info("Tracking mode: freeze, nudge, click, or stop tracking")
 
-    while tracking_active:
-        with contextlib.suppress(Exception):
-            core.stream.read(
-                core.stream.get_read_available(), exception_on_overflow=False
-            )
+    for cmd_lower in core.listen_modal(
+        "tracking",
+        prompt=(
+            "click double click right click freeze go nudge up down left "
+            "right recalibrate stop tracking close cancel"
+        ),
+        timeout=10,
+        idle_timeout=30,
+    ):
+        if not tracking_active:
+            logger.info("Tracking stopped; leaving tracking mode")
+            return
 
-        first = core.wait_for_speech(timeout=10)
-        if not first:
-            continue
-
-        audio = first + core.record_until_silence()
-        cmd = core.transcribe(
-            audio,
-            prompt=(
-                "click double click right click freeze go nudge up down left "
-                "right recalibrate stop tracking close cancel"
-            ),
-        )
-        if not cmd:
-            continue
-
-        cmd_lower = cmd.lower().strip()
         logger.debug("  ← %s", cmd_lower)
 
         # Exit commands
@@ -476,11 +473,15 @@ def listen_for_tracking_commands(core):
         # Freeze/Go
         if any(w in cmd_lower for w in ["freeze", "free", "rees", "frees"]):
             frozen = True
+            # "Frozen" contains none of the words that trigger this branch, so
+            # hearing itself back can't freeze again.
+            core.speak("Frozen")
             logger.debug("  → Frozen at (%d, %d)", int(cursor_x), int(cursor_y))
             continue
 
         if cmd_lower in ["go", "go go", "unfreeze", "resume", "track"]:
             frozen = False
+            core.speak("Following")
             logger.debug("  → Resumed")
             continue
 

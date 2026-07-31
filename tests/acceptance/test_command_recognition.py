@@ -111,6 +111,9 @@ def run_one_unrecognised_command(ctx):
     # Keep only the stub plugin (skip the real plugin scan) and short-circuit
     # the audio helpers so nothing touches a real mic.
     easy.load_plugins = Mock()
+    # Startup samples the room to set the silence threshold, which would eat the
+    # scripted stream reads below before the wake word ever fires.
+    easy.calibrate_silence = Mock()
     easy.wait_for_speech = Mock(return_value=b"heard-something")
     easy.record_until_silence = Mock(return_value=b"")
     easy.transcribe = Mock(return_value="flibbertigibbet")

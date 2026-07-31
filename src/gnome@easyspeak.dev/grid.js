@@ -11,7 +11,18 @@ import {
     clampToWorkArea,
     scrollDirectionDelta,
     gridGeometry,
+    dragPath,
 } from './extension-helpers.js';
+
+// A drag is a journey, not a jump. GTK begins one only after the pointer travels
+// past its threshold with the button held, and picks a drop target from where the
+// pointer comes to rest -- so the press, single teleport and immediate release
+// this used to inject read as a plain click and dropped nothing. The travel is
+// spread over real time via timeouts, because the application on the other side
+// has to run its own main loop to process each motion.
+const DRAG_STEPS = 24;
+const DRAG_STEP_MS = 12;
+const DRAG_SETTLE_MS = 200;
 
 export class GridOverlay {
     constructor() {
@@ -22,6 +33,9 @@ export class GridOverlay {
         this.workArea = null;
         this._pointer = null;
         this._dragging = false;
+        this._dragOrigin = null;
+        this._dragTimer = null;
+        this._dropTimer = null;
     }
 
     _getPointer() {
@@ -123,21 +137,69 @@ export class GridOverlay {
 
     startDrag(x, y) {
         // Keep grid visible so user can navigate to end point
+        this._cancelDragTimers();
         const pointer = this._getPointer();
-        const t = GLib.get_monotonic_time();
-        pointer.notify_absolute_motion(t, x, y);
-        pointer.notify_button(t + 5000, Clutter.BUTTON_PRIMARY, Clutter.ButtonState.PRESSED);
+        pointer.notify_absolute_motion(GLib.get_monotonic_time(), x, y);
+        pointer.notify_button(GLib.get_monotonic_time(), Clutter.BUTTON_PRIMARY,
+            Clutter.ButtonState.PRESSED);
+        // Remembered so the release can travel here from there, rather than
+        // teleporting straight to the drop point.
+        this._dragOrigin = [x, y];
         this._dragging = true;
     }
 
     endDrag(x, y) {
         if (!this._dragging) return;
         this.hide();
+        this._cancelDragTimers();
+
+        const [sx, sy] = this._dragOrigin ?? [x, y];
+        const path = dragPath(sx, sy, x, y, DRAG_STEPS);
         const pointer = this._getPointer();
-        const t = GLib.get_monotonic_time();
-        pointer.notify_absolute_motion(t, x, y);
-        pointer.notify_button(t + 5000, Clutter.BUTTON_PRIMARY, Clutter.ButtonState.RELEASED);
+        let step = 0;
+
+        this._dragTimer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, DRAG_STEP_MS, () => {
+            pointer.notify_absolute_motion(GLib.get_monotonic_time(),
+                path[step].x, path[step].y);
+            step++;
+            if (step < path.length) return GLib.SOURCE_CONTINUE;
+
+            this._dragTimer = null;
+            // Rest on the target before letting go: the drop site needs a moment
+            // to recognise the pointer and accept, and a release in the same
+            // millisecond as the last motion gives it none.
+            this._dropTimer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, DRAG_SETTLE_MS, () => {
+                this._dropTimer = null;
+                this._releaseDragButton();
+                return GLib.SOURCE_REMOVE;
+            });
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    // Let go of the primary button and forget the drag.
+    _releaseDragButton() {
+        const pointer = this._getPointer();
+        pointer.notify_button(GLib.get_monotonic_time(), Clutter.BUTTON_PRIMARY,
+            Clutter.ButtonState.RELEASED);
         this._dragging = false;
+        this._dragOrigin = null;
+    }
+
+    _cancelDragTimers() {
+        for (const name of ['_dragTimer', '_dropTimer']) {
+            if (this[name]) {
+                GLib.Source.remove(this[name]);
+                this[name] = null;
+            }
+        }
+    }
+
+    // Abandon any drag at once, button up. Called when the extension is disabled
+    // so a half-finished drag can never leave the button held compositor-wide.
+    abortDrag() {
+        this._cancelDragTimers();
+        if (this._dragging) this._releaseDragButton();
     }
 
     scroll(x, y, direction, clicks) {

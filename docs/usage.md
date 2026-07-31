@@ -52,6 +52,21 @@ the module that reads each (linked to its API reference).
 | `EASYSPEAK_WHISPER_COMPUTE_TYPE` | `int8`                                 | CTranslate2 compute type                   |
 | `EASYSPEAK_WHISPER_CPU_THREADS`  | `0`                                    | CPU threads for transcription (`0` = auto) |
 | `EASYSPEAK_WHISPER_MODEL`        | `base.en`                              | faster-whisper model for transcription     |
+| `EASYSPEAK_SILENCE_THRESHOLD`    | measured at startup                    | Amplitude below which audio counts as quiet |
+
+`EASYSPEAK_SILENCE_THRESHOLD` is normally left alone. On startup EasySpeak
+listens to the room for a second and sets the threshold above whatever it
+measures — a fixed value assumes a quiet room, and where the ambient level sits
+above it (a desk fan, a desktop machine) silence is never detected, so every
+recording runs to its full time cap and every command feels slow. The measured
+floor is printed at startup:
+
+```
+Room noise floor 412; silence threshold 1030
+```
+
+Set the variable to skip the measurement, e.g. if you happen to be talking during
+the first second after launch.
 
 `EASYSPEAK_HOTKEY` takes the `ctrl`/`shift`/`alt`/`super` aliases or raw evdev
 key names joined with `+` (e.g. `ctrl+space`); set it to empty, `off`, or `none`
@@ -66,6 +81,20 @@ to turn it off, and an unrecognized key disables it too. See
 
 ### [`plugins.dictation`][plugins.dictation]
 
-| Variable                 | Default   | Effect                                          |
-| ------------------------ | --------- | ----------------------------------------------- |
-| `EASYSPEAK_ATSPI_PYTHON` | `python3` | Interpreter running the dictation AT-SPI helper |
+| Variable                 | Default   | Effect                                             |
+| ------------------------ | --------- | -------------------------------------------------- |
+| `EASYSPEAK_ATSPI_PYTHON` | probed    | Interpreter running the dictation AT-SPI helper    |
+| `EASYSPEAK_PASTE_KEYS`   | per app   | Keystroke that pastes dictated text                |
+
+Dictation types by putting the text on the clipboard and sending a paste
+keystroke — every toolkit implements paste, whereas accessibility-level
+insertion is widely stubbed out. `EASYSPEAK_PASTE_KEYS` overrides the chord, e.g.
+`shift+insert`; by default it is Ctrl+V, or Ctrl+Shift+V when a terminal has
+focus. It accepts `ctrl`, `shift`, `alt`, `super`, `insert` and `v` joined with
+`+`.
+
+`EASYSPEAK_ATSPI_PYTHON` is normally left alone. The AT-SPI helper needs
+PyGObject and the AT-SPI typelib, which the application's own virtual environment
+usually lacks, so candidate interpreters are probed with the helper's real import
+chain and the first that works is kept. Set the variable to point straight at one
+(the Nix flake does).

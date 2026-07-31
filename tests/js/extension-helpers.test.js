@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+    dragPath,
     clampToWorkArea,
     scrollDirectionDelta,
     gridGeometry,
@@ -162,4 +163,44 @@ test('pickAutostartSource falls back to the first present system entry', () => {
 test('pickAutostartSource uses the fallback when nothing is installed', () => {
     assert.equal(pickAutostartSource(null, [null, null], 'MIN'), 'MIN');
     assert.equal(pickAutostartSource(null, [], 'MIN'), 'MIN');
+});
+
+test('dragPath ends exactly on the target', () => {
+    const path = dragPath(100, 100, 400, 200, 24);
+    assert.equal(path.length, 24);
+    assert.deepEqual(path.at(-1), { x: 400, y: 200 });
+});
+
+test('dragPath never emits the press point itself', () => {
+    // The press already happened there; re-sending it is a wasted event.
+    const path = dragPath(50, 50, 250, 50, 12);
+    assert.notDeepEqual(path[0], { x: 50, y: 50 });
+});
+
+test('dragPath eases in, so early motion stays near the source', () => {
+    const path = dragPath(0, 0, 1000, 0, 20);
+    // A tenth of the way through the steps, well under a tenth of the distance.
+    assert.ok(path[1].x < 100, `expected an eased start, got ${path[1].x}`);
+});
+
+test('dragPath crosses the GTK drag threshold within a few steps', () => {
+    // GTK starts a drag only after 8px of travel; a path that creeps below that
+    // for too long never becomes a drag at all.
+    const path = dragPath(0, 0, 200, 0, 24);
+    const crossed = path.findIndex((point) => Math.abs(point.x) > 8);
+    assert.ok(crossed >= 0 && crossed < 6, `threshold crossed at step ${crossed}`);
+});
+
+test('dragPath moves monotonically toward the target', () => {
+    const path = dragPath(0, 0, 300, 150, 16);
+    for (let i = 1; i < path.length; i++) {
+        assert.ok(path[i].x >= path[i - 1].x);
+        assert.ok(path[i].y >= path[i - 1].y);
+    }
+});
+
+test('dragPath handles a backwards drag', () => {
+    const path = dragPath(400, 300, 100, 50, 10);
+    assert.deepEqual(path.at(-1), { x: 100, y: 50 });
+    assert.ok(path[0].x < 400 && path[0].y < 300);
 });

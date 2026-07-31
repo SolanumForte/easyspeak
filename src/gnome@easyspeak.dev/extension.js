@@ -228,6 +228,10 @@ export default class EasySpeakGridExtension extends Extension {
 
     disable() {
         if (this._grid) {
+            // Button up first: hide() only tears down the overlay, and a drag
+            // still in progress would otherwise stay pressed with nothing left
+            // to release it.
+            this._grid.abortDrag();
             this._grid.hide();
             this._grid = null;
         }

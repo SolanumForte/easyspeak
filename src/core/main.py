@@ -8,11 +8,10 @@ import contextlib
 import importlib
 import logging
 import os
+import re
 import subprocess
 import sys
-import tempfile
 import time
-import wave
 from pathlib import Path
 
 import numpy as np
@@ -22,12 +21,17 @@ from .config import (
     COMMAND_PROMPT,
     FOLLOWUP_IDLE_ROUNDS,
     HOTKEY_COMBO,
+    MAX_RECORD_SECONDS,
     MISUNDERSTAND_GRACE,
+    SILENCE_CALIBRATION_SECONDS,
     SILENCE_DURATION,
+    SILENCE_NOISE_MARGIN,
     SILENCE_THRESHOLD,
+    SILENCE_THRESHOLD_MAX,
     WAKE_COOLDOWN,
     WAKE_SOUND,
     WAKE_THRESHOLD,
+    WAKE_WORD_SPOKEN,
     WHISPER_COMPUTE_TYPE,
     WHISPER_CPU_THREADS,
     WHISPER_MODEL,
@@ -40,6 +44,47 @@ from .tray import Tray, TrayAction
 from .wakeword import WakeWordModel
 
 logger = logging.getLogger(__name__)
+
+# Players tried for the short desktop sounds, in order. paplay first because it
+# is what the docs install; the others cover a session that has one but not the
+# others. Whichever answers first is remembered.
+SOUND_PLAYERS = (["paplay"], ["pw-play"], ["canberra-gtk-play", "-f"])
+SOUND_TIMEOUT = 5.0
+
+# Spoken forms of the wake word to strip off a command. Users say "Hey Jarvis,
+# numbers" out of habit inside a mode that is already listening, and a mode that
+# left the prefix on simply failed to match anything.
+WAKE_PREFIXES = (
+    "hey jarvis",
+    "hey jarvis,",
+    "hey, jarvis",
+    "hey, jarvis,",
+    "hey jarvis.",
+    "jarvis",
+    "jarvis,",
+)
+
+
+def strip_wake_words(cmd):
+    """Remove a leading spoken wake word and surrounding punctuation.
+
+    Only a prefix is removed. Replacing every occurrence anywhere in the utterance
+    -- which is what this did -- eats the word out of the middle of a command, so
+    "search jarvis" became "search" and a URL containing it lost part of itself.
+    Longest prefix first, so "hey jarvis," is matched before "jarvis".
+    """
+    cmd = cmd.lower().strip()
+    for wake in sorted(WAKE_PREFIXES, key=len, reverse=True):
+        if cmd == wake:
+            return ""
+        if cmd.startswith(wake):
+            rest = cmd[len(wake) :]
+            # Only a prefix if a word actually ends here.
+            if not rest or rest[0] in " ,.!?":
+                cmd = rest.strip()
+                break
+    return cmd.strip(".,!? ")
+
 
 # =============================================================================
 # CORE CLASS
@@ -70,6 +115,9 @@ class EasySpeak:
         self.keep_listening = False
         self.unrecognized = False
         self.spoke = False
+        # Set by listen_modal when the tray asks to quit from inside a plugin's
+        # modal mode, so the request survives the unwind back to the main loop.
+        self.exit_requested = False
         self.last_misunderstand_time = 0
         # Persistent text-to-speech pipeline (piper -> audio player) so the
         # voice model is loaded only once.
@@ -80,6 +128,10 @@ class EasySpeak:
         # the session to run while the combo is held (see register_push_to_talk).
         self.hotkey = HotkeyListener(HOTKEY_COMBO)
         self._push_to_talk = None
+        # Remembered after the first sound plays, so later ones cost one process.
+        self._sound_player = None
+        # Raised to suit the room by calibrate_silence() once the mic is open.
+        self.silence_threshold = SILENCE_THRESHOLD
 
     # --- Utilities for plugins ---
 
@@ -201,18 +253,7 @@ class EasySpeak:
 
         Returns False to exit.
         """
-        cmd = cmd.lower()
-        for wake in [
-            "hey jarvis",
-            "hey jarvis,",
-            "hey, jarvis",
-            "hey, jarvis,",
-            "hey jarvis.",
-            "jarvis",
-            "jarvis,",
-        ]:
-            cmd = cmd.replace(wake, "").strip()
-        cmd = cmd.strip(".,!? ")
+        cmd = strip_wake_words(cmd)
         self.unrecognized = False
 
         if not cmd:
@@ -325,22 +366,76 @@ class EasySpeak:
                 exception_on_overflow=False,
             )
 
+    def calibrate_silence(self):
+        """Measure the room's noise floor and set the silence threshold above it.
+
+        A fixed threshold assumes a quiet room. Where the ambient level sits above
+        it -- a fan, a desktop, an air conditioner -- `is_silence` never returns
+        True, so nothing ever stops recording early: a three-word command took the
+        whole five-second cap and a dictated sentence took twenty, which is most of
+        the wait between speaking and seeing text.
+
+        Uses the median chunk level so a cough or a passing car doesn't skew the
+        measurement, and clamps the result: never below the configured floor, and
+        never so high that speech itself would read as silence.
+        """
+        override = os.environ.get("EASYSPEAK_SILENCE_THRESHOLD")
+        if override:
+            with contextlib.suppress(ValueError):
+                self.silence_threshold = int(override)
+                logger.info(
+                    "Silence threshold %d (from environment)", self.silence_threshold
+                )
+                return
+
+        chunks = []
+        for _ in range(int(SILENCE_CALIBRATION_SECONDS * 16000 / 1600)):
+            with contextlib.suppress(Exception):
+                pcm = self.stream.read(1600, exception_on_overflow=False)
+                chunks.append(np.abs(np.frombuffer(pcm, dtype=np.int16)).mean())
+
+        if not chunks:
+            return  # no audio to measure; the floor stands
+
+        floor = float(np.median(chunks))
+        self.silence_threshold = int(
+            min(
+                max(floor * SILENCE_NOISE_MARGIN, SILENCE_THRESHOLD),
+                SILENCE_THRESHOLD_MAX,
+            )
+        )
+        logger.info(
+            "Room noise floor %.0f; silence threshold %d",
+            floor,
+            self.silence_threshold,
+        )
+
     def is_silence(self, audio_chunk):
         """Return True if the audio chunk's mean amplitude is below the threshold."""
-        return np.abs(audio_chunk).mean() < SILENCE_THRESHOLD
+        return np.abs(audio_chunk).mean() < self.silence_threshold
 
-    def record_until_silence(self, should_continue=None):
-        """Record mic audio until a short silence, capped at five seconds.
+    def record_until_silence(
+        self, should_continue=None, max_seconds=None, silence_duration=None
+    ):
+        """Record mic audio until a short silence, or the cap. Plugin-facing.
 
-        Returns the captured PCM bytes. Plugin-facing. `should_continue` (used by
-        push-to-talk) lets a key release cut the recording short instead of waiting out
-        the silence window.
+        Returns the captured PCM bytes. `should_continue` (used by push-to-talk) lets
+        a key release cut the recording short instead of waiting out the silence
+        window.
+
+        Both limits are adjustable because a command and a dictated sentence need
+        very different ones: the command defaults stopped recording during the pause
+        in the middle of a sentence, and truncated anything past five seconds.
         """
+        max_seconds = MAX_RECORD_SECONDS if max_seconds is None else max_seconds
+        if silence_duration is None:
+            silence_duration = SILENCE_DURATION
+
         frames = []
         silent_chunks = 0
-        chunks_needed = int(SILENCE_DURATION * 16000 / 1600)
+        chunks_needed = int(silence_duration * 16000 / 1600)
 
-        for i in range(int(5 * 16000 / 1600)):
+        for i in range(int(max_seconds * 16000 / 1600)):
             if should_continue is not None and not should_continue():
                 break
             pcm = self.stream.read(1600, exception_on_overflow=False)
@@ -371,25 +466,201 @@ class EasySpeak:
                 return pcm
         return None
 
+    # Whisper hands its own initial_prompt back as the transcription when it is
+    # given near-silence, so a "command" that is a verbatim run of the prompt is
+    # noise. Real commands are short ("three seven five", "right click"), so only a
+    # long run counts as an echo and a genuine one-word "six" still lands.
+    PROMPT_ECHO_MIN_WORDS = 4
+
+    # Spoken digits are exempt: a long zone chain ("one two three four") is a real
+    # grid command that happens to be in prompt order, and an all-digit echo only
+    # zooms the grid — harmless, and the next silent round still ends the mode. The
+    # echoes that must be caught always carry an action word (scroll, click, stop).
+    NUMBER_WORDS = frozenset(
+        {
+            "zero",
+            "one",
+            "two",
+            "three",
+            "four",
+            "five",
+            "six",
+            "seven",
+            "eight",
+            "nine",
+            "ten",
+        }
+    )
+
+    @classmethod
+    def _is_prompt_echo(cls, text, prompt):
+        """Whether `text` is a verbatim, non-numeric run of words from `prompt`."""
+        words = re.sub(r"[^\w\s]", " ", text.lower()).split()
+        if len(words) < cls.PROMPT_ECHO_MIN_WORDS:
+            return False
+        if all(w.isdigit() or w in cls.NUMBER_WORDS for w in words):
+            return False
+        prompt_words = re.sub(r"[^\w\s]", " ", prompt.lower()).split()
+        span = len(words)
+        return any(
+            prompt_words[i : i + span] == words
+            for i in range(len(prompt_words) - span + 1)
+        )
+
     def transcribe(self, audio_data, prompt=None):
         """Transcribe raw PCM audio to text with Whisper.
 
         `prompt` biases recognition (defaults to the command vocabulary). Plugin-facing.
+        An echo of that prompt is dropped as silence: Whisper hands its own
+        `initial_prompt` back when given near-silence, and grid mode was executing
+        that as a command.
         """
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-            with wave.open(f.name, "wb") as wf:
-                wf.setnchannels(1)
-                wf.setsampwidth(2)
-                wf.setframerate(16000)
-                wf.writeframes(audio_data)
+        # Handed to Whisper as samples rather than a file. Writing a WAV to /tmp
+        # and having the model read and decode it again put disk I/O and an audio
+        # decode between the user finishing a sentence and seeing it.
+        samples = np.frombuffer(audio_data, dtype=np.int16).astype(np.float32) / 32768.0
 
-            use_prompt = prompt or COMMAND_PROMPT
-            segments, _ = self.whisper.transcribe(
-                f.name, initial_prompt=use_prompt, beam_size=1, vad_filter=True
+        use_prompt = prompt or COMMAND_PROMPT
+        started = time.monotonic()
+        segments, _ = self.whisper.transcribe(
+            samples,
+            initial_prompt=use_prompt,
+            beam_size=1,
+            vad_filter=True,
+            language="en",
+            # Nothing here reads timestamps, and generating them costs tokens.
+            without_timestamps=True,
+            # Each utterance stands alone. Carrying context between them makes
+            # latency grow over a dictation session and feeds Whisper's habit of
+            # repeating itself on quiet audio.
+            condition_on_previous_text=False,
+        )
+        text = " ".join([s.text for s in segments]).strip()
+        # The wait between finishing a sentence and seeing it is mostly this.
+        # Logged so tuning is a measurement rather than a guess: compare it
+        # against the silence window to see which one to reach for.
+        logger.debug(
+            "transcribed %.1fs of audio in %.2fs",
+            len(audio_data) / 32000,
+            time.monotonic() - started,
+        )
+
+        if text and self._is_prompt_echo(text, use_prompt):
+            logger.debug("Ignoring prompt echo: %s", text)
+            return ""
+        return text
+
+    # --- Modal plugin modes ---
+
+    def listen_modal(
+        self,
+        label,
+        prompt=None,
+        timeout=10,
+        idle_timeout=30,
+        max_record_seconds=None,
+        silence_duration=None,
+    ):
+        """Yield transcribed commands for a plugin's modal mode. Plugin-facing.
+
+        Plugins that take over the microphone (grid, browser, dictation, head
+        tracking) each ran their own `while` loop, which starved everything the main
+        loop owns: the tray was never polled, so its Quit and Mute entries and the
+        Quick Settings toggle did nothing; and with no idle limit a mode never ended
+        on its own, so an unattended session stayed in it indefinitely with the wake
+        word unreachable. Driving the loop from here keeps those alive — the tray is
+        polled between utterances, and the mode ends `idle_timeout` seconds after the
+        last command it understood.
+
+        The deadline is wall-clock and only a recognised command pushes it back.
+        Counting silent *rounds* instead doesn't work in a real room: any sound over
+        the threshold ends the wait early, so ambient noise both resets a round-based
+        counter forever and makes each round take an unpredictable amount of time.
+
+        `label` names the mode in the exit log line and the spoken notice, and
+        `prompt` biases Whisper towards that mode's vocabulary. `timeout` is how
+        long a single listen waits for speech, and `idle_timeout` how long the mode
+        survives without a recognised command. `max_record_seconds` and
+        `silence_duration` fall back to the command defaults when None; dictation
+        passes larger values, since a sentence has pauses in it and runs longer
+        than a command.
+
+        Yields each recognised command, lowercased and stripped of surrounding
+        punctuation. The generator simply stops when the mode should end, so a
+        caller's `for` loop falls through to its own cleanup.
+        """
+        # Plugins announce the mode ("Dictation", "Browser", "Grid") immediately
+        # before calling this, so wait that out and empty the microphone before the
+        # first listen. Otherwise the announcement is still playing when recording
+        # starts and lands on the front of the user's first sentence -- "Dictation
+        # search for potatoes".
+        if self.spoke:
+            self._drain_feedback()
+            self.spoke = False
+
+        deadline = time.monotonic() + idle_timeout
+        while True:
+            # The same poll the wake-word loop runs, so sleep and quit still work
+            # while a mode holds the microphone.
+            action = self.tray.poll(self._close_stream, self._open_stream)
+            if action is TrayAction.QUIT:
+                self.exit_requested = True
+                return
+            if action is TrayAction.RESUME:
+                # Just woke from sleep: the mode's state (grid bounds, hint
+                # overlay, tracking centre) is stale, so hand control back to the
+                # wake-word loop rather than resuming mid-mode. Announced, because
+                # this was the one way out of a mode that said nothing at all.
+                logger.info("%s mode ended: reactivated", label.capitalize())
+                self.speak(f"Leaving {label}. Say {WAKE_WORD_SPOKEN} to continue.")
+                return
+
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                logger.info("%s mode ended: idle", label.capitalize())
+                # Say what changed, not just that something did. Commands that
+                # worked a moment ago now need the wake word in front of them, and
+                # "Leaving browser" doesn't tell anyone that.
+                self.speak(f"Leaving {label}. Say {WAKE_WORD_SPOKEN} to continue.")
+                return
+
+            self.flush_stream()
+            # Never wait past the deadline, so the mode ends on time even when the
+            # room is quiet enough that every listen runs its full length.
+            first = self.wait_for_speech(timeout=min(timeout, remaining))
+            if first is None:
+                continue
+
+            rest = self.record_until_silence(
+                max_seconds=max_record_seconds, silence_duration=silence_duration
             )
-            text = " ".join([s.text for s in segments]).strip()
-            Path(f.name).unlink()
-            return text
+            text = self.transcribe(first + rest, prompt=prompt)
+            if not text:
+                # Noise, or an echo of our own prompt. Not a command, so the
+                # deadline stands.
+                continue
+
+            spoken = strip_wake_words(text)
+            if not spoken:
+                continue  # the wake word on its own is not a command
+
+            deadline = time.monotonic() + idle_timeout
+            self.spoke = False
+            yield spoken
+
+            # Control returns here once the plugin has handled that command, which
+            # it may well have answered out loud. With a voice installed the open
+            # microphone hears the reply, transcribes it, and hands it back as the
+            # next command -- which turned "Sorry, I didn't understand." into an
+            # endless conversation with itself. The wake-word loop already avoids
+            # this by ending its session whenever a command speaks; a mode can't
+            # end, so it waits for playback to finish and drops whatever the
+            # microphone caught of it instead. The deadline restarts afterwards,
+            # since draining takes real time that isn't the user being idle.
+            if self.spoke:
+                self._drain_feedback()
+                self.spoke = False
+                deadline = time.monotonic() + idle_timeout
 
     # --- Main loop ---
 
@@ -401,13 +672,41 @@ class EasySpeak:
         self.wakeword.reset()
         self.flush_stream()
 
+    def play_sound(self, sound):
+        """Play a short desktop sound, best-effort. Plugin-facing.
+
+        The daemon is voice-first, so an audible cue is often the only signal a
+        user gets -- especially with no Piper voice installed, where every spoken
+        reply is dropped. Failures are never fatal: this used to be a bare
+        `paplay` call, so a machine without pulseaudio-utils took the whole daemon
+        down on the first wake word. The working player is remembered after the
+        first success, so a mode change costs one process, not three.
+        """
+        if not Path(sound).exists():
+            logger.debug("sound file not found: %s", sound)
+            return False
+        players = [self._sound_player] if self._sound_player else SOUND_PLAYERS
+        for player in players:
+            try:
+                result = subprocess.run(
+                    [*player, str(sound)], capture_output=True, timeout=SOUND_TIMEOUT
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                continue
+            if result.returncode == 0:
+                self._sound_player = player
+                return True
+        self._sound_player = None
+        logger.debug("no working audio player for %s", sound)
+        return False
+
     def _play_wake_chime(self):
         """Play the wake acknowledgement sound, then flush the mic.
 
         Flushing drops the chime audio that bled into the mic so it isn't mistaken for
         the user speaking.
         """
-        subprocess.run(["paplay", WAKE_SOUND], capture_output=True)
+        self.play_sound(WAKE_SOUND)
         self.flush_stream()
 
     def _drain_feedback(self):
@@ -466,6 +765,10 @@ class EasySpeak:
                 if cmd:
                     logger.info("👂 %s", cmd)
                     if not self.route_command(cmd.lower().strip(".,!? ")):
+                        return True
+                    # A plugin's modal mode may have taken the tray's Quit while it
+                    # held the microphone; honour it now that the stack has unwound.
+                    if self.exit_requested:
                         return True
                     self._reset_detector()
                     if not self.unrecognized and not self.spoke:
@@ -538,6 +841,9 @@ class EasySpeak:
             with suppressed_c_stderr():
                 self.audio = pyaudio.PyAudio()
             self._open_stream()
+
+            # Measure the room before listening, so silence detection matches it.
+            self.calibrate_silence()
 
             self.tray.started()
             # Start keyboard (silent) activation; no-op if disabled or no

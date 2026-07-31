@@ -4,6 +4,7 @@ import subprocess
 from unittest.mock import Mock, mock_open, patch
 
 import pytest
+from easyspeak.core import config
 from easyspeak.core.speech import SpeechPipeline
 
 
@@ -38,7 +39,11 @@ class TestSpeechPipeline:
         # Pipeline spawned: player + piper
         assert mock_popen.call_count == 2
         piper_cmd = mock_popen.call_args_list[1].args[0]
-        assert piper_cmd[0] == "piper"
+        # Compared against the resolved binary, not the literal "piper": config
+        # points at the venv's own piper when one is installed and only falls back
+        # to the bare name when it isn't, so hardcoding the fallback made this test
+        # pass only on machines without Piper.
+        assert piper_cmd[0] == config.PIPER_BIN
         assert "--output-raw" in piper_cmd
 
         # Phrase was written to piper's stdin (newline-terminated)

@@ -272,3 +272,53 @@ def test_handle_unrecognized_command(mock_core):
 
     assert result is None
     assert not mock_core.speak.called
+
+
+@pytest.mark.parametrize(
+    ["command", "expected_func"],
+    [
+        # Silencing notifications IS do-not-disturb on, so the two vocabularies
+        # run opposite ways and the direction word has to be read against the noun
+        # the user actually spoke.
+        ("turn off notifications", "dnd_on"),
+        ("notifications off", "dnd_on"),
+        ("turn notifications off", "dnd_on"),
+        ("disable notifications", "dnd_on"),
+        ("turn on notifications", "dnd_off"),
+        ("notifications on", "dnd_off"),
+        ("enable notifications", "dnd_off"),
+    ],
+)
+@patch.object(system, "dnd_on")
+@patch.object(system, "dnd_off")
+def test_handle_dnd_direction_on_notifications(
+    mock_dnd_off, mock_dnd_on, command, expected_func, mock_core
+):
+    """When 'notifications' is the noun then the direction is inverted.
+
+    "notifications" also contains the letters "on", which the original substring
+    test matched inside the trigger word itself.
+    """
+    func_map = {"dnd_on": mock_dnd_on, "dnd_off": mock_dnd_off}
+    wrong = "dnd_off" if expected_func == "dnd_on" else "dnd_on"
+
+    result = system.handle(command, mock_core)
+
+    assert result is True
+    assert func_map[expected_func].called
+    assert not func_map[wrong].called
+
+
+@pytest.mark.parametrize("command", ["notifications", "do not disturb", "dnd"])
+def test_handle_dnd_without_a_direction_falls_through(command, mock_core):
+    """When no direction is given then nothing is toggled."""
+    assert system.handle(command, mock_core) is None
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["take a screenshot", "screenshots up", "shut down the upstairs light"],
+)
+def test_handle_ignores_substring_matches(command, mock_core):
+    """When a word merely contains a trigger then no system command fires."""
+    assert system.handle(command, mock_core) is None

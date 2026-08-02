@@ -44,10 +44,17 @@ def attach_listen_modal(core):
 
 @pytest.fixture
 def mock_core():
-    """Create a mock core object for testing plugins."""
+    """Create a mock core object for testing plugins.
+
+    Session flags a plugin's setup() would set are set here too. A bare Mock
+    invents any attribute asked of it and every invented one is truthy, so
+    without this a flag meaning "already in browser mode" reads as True.
+    """
     core = Mock()
     core.stream.read = Mock()
     core.stream.get_read_available = Mock(return_value=1024)
+    core.browser_page_js_stale = False
+    core.in_browser_mode = False
     return attach_listen_modal(core)
 
 
@@ -123,6 +130,9 @@ def mock_core_factory():
         core = Mock()
         core.stream.read = Mock()
         core.stream.get_read_available = Mock(return_value=1024)
+        # Session flags a plugin's setup() would set; see mock_core.
+        core.browser_page_js_stale = False
+        core.in_browser_mode = False
 
         if wait_for_speech_values is not None:
             core.wait_for_speech = Mock(side_effect=wait_for_speech_values)

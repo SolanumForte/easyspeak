@@ -132,9 +132,8 @@ def test_ensure_gnome_accessibility_oserror(mock_which, mock_run, readlog):
         ("hello exclamation point", "Hello!"),
         # Colon and semicolon
         ("hello colon world", "Hello: world"),
-        # Note: semicolon commands are broken - "colon" pattern matches first in the actual code
-        ("hello semicolon world", "Hello semi: world"),
-        ("hello semi colon world", "Hello semi: world"),
+        ("hello semicolon world", "Hello; world"),
+        ("hello semi colon world", "Hello; world"),
         # New sentence should add period and space and capitalize next word
         ("hello new sentence world", "Hello. World"),
         ("hello next sentence world", "Hello. World"),
@@ -179,8 +178,12 @@ def test_ensure_gnome_accessibility_oserror(mock_which, mock_run, readlog):
         ("hello star world", "Hello*world"),
         ("hello underscore world", "Hello_world"),
         ("hello slash world", "Hello/world"),
-        # Note: backslash command is broken - "slash" pattern matches first in the actual code
-        ("hello backslash world", "Hello back/world"),
+        ("hello backslash world", "Hello\\world"),
+        ("it starts here", "It starts here"),
+        ("open workspace one", "Open workspace one"),
+        ("i deleted the coma", "I deleted the,"),
+        ("the periodic table", "The periodic table"),
+        ("a hashtag and a hash", "A#and a#"),
         # Multiple spaces should be collapsed
         ("hello    world", "Hello world"),
         # Punctuation already in input gets stripped by Whisper cleanup

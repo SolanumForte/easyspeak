@@ -464,9 +464,10 @@ def handle(cmd, core):
     global grid_active, grid_bounds, last_bounds, screen_size
 
     cmd_lower = cmd.lower().strip()
+    words = cmd_lower.split()
 
     # "Again" - reopen at last position
-    if any(w in cmd_lower for w in ["again", "repeat", "reopen"]) and last_bounds:
+    if any(w in words for w in ["again", "repeat", "reopen"]) and last_bounds:
         screen_size = get_screen_size()
         grid_bounds = last_bounds
         grid_active = True
@@ -479,9 +480,9 @@ def handle(cmd, core):
 
     # Show grid
     if (
-        any(w in cmd_lower for w in GRID_TRIGGERS)
-        and "close" not in cmd_lower
-        and "hide" not in cmd_lower
+        any(w in words for w in GRID_TRIGGERS)
+        and "close" not in words
+        and "hide" not in words
     ):
         show_grid()
         listen_for_grid_commands(core)

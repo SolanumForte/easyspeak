@@ -1343,11 +1343,9 @@ def test_handle_does_not_nest_browser_mode(mock_browser_mode, command, mock_core
     is one it does own -- so it routed straight back into handle() and opened a
     second mode on top of the first, relaunching the browser on the way.
     """
-    browser.in_browser_mode = True
-    try:
-        assert browser.handle(command, mock_core) is True
-    finally:
-        browser.in_browser_mode = False
+    mock_core.in_browser_mode = True
+
+    assert browser.handle(command, mock_core) is True
 
     assert not mock_browser_mode.called
     assert not mock_core.host_run.called
@@ -1360,7 +1358,7 @@ def test_browser_mode_flag_is_cleared_on_exit(mock_handle_cmd, mock_core_factory
 
     browser.browser_mode(mock_core)
 
-    assert browser.in_browser_mode is False
+    assert mock_core.in_browser_mode is False
 
 
 @patch.object(browser, "handle_browser_command", side_effect=RuntimeError("boom"))
@@ -1373,7 +1371,7 @@ def test_browser_mode_flag_is_cleared_after_a_failure(
     with pytest.raises(RuntimeError):
         browser.browser_mode(mock_core)
 
-    assert browser.in_browser_mode is False
+    assert mock_core.in_browser_mode is False
 
 
 @pytest.mark.parametrize("misheard", ["number", "numbers", "links"])
@@ -1485,11 +1483,9 @@ def test_config_is_left_alone_when_already_right(mock_method, tmp_path, monkeypa
 
 
 @pytest.fixture(autouse=True)
-def _forget_navigation():
-    """Start each test with no pending reload."""
-    browser._needs_reload_before_page_js = False
-    yield
-    browser._needs_reload_before_page_js = False
+def _forget_navigation(mock_core):
+    """Start each test with no pending reload, as setup() leaves it."""
+    mock_core.browser_page_js_stale = False
 
 
 @pytest.mark.parametrize("command", ["back", "go back", "forward", "next page"])
@@ -1541,11 +1537,11 @@ def test_the_reload_happens_only_once(mock_qb, mock_listen, mock_sleep, mock_cor
 
 @patch("time.sleep")
 @patch.object(browser, "qb")
-def test_show_hints_settles_before_hinting(mock_qb, mock_sleep):
+def test_show_hints_settles_before_hinting(mock_qb, mock_sleep, mock_core):
     """A reloaded page needs a moment before its elements can be walked."""
-    browser._needs_reload_before_page_js = True
+    mock_core.browser_page_js_stale = True
 
-    browser.show_hints()
+    browser.show_hints(mock_core)
 
     assert mock_sleep.called
     sent = [call.args[0] for call in mock_qb.call_args_list]
@@ -1804,3 +1800,33 @@ def test_config_updates_settings_written_with_other_spacing(
     text = cfg.read_text()
     assert text.count("c.hints.chars") == 1
     assert text.count("c.content.autoplay") == 1
+
+
+@patch.object(browser, "ensure_qutebrowser_config")
+def test_setup_declares_the_page_state(mock_config, mock_core):
+    """The session carries this, so setup is where it starts out false."""
+    browser.setup(mock_core)
+
+    assert mock_core.browser_page_js_stale is False
+
+
+@patch("time.sleep")
+@patch.object(browser, "listen_for_hint")
+@patch.object(browser, "qb")
+def test_page_state_belongs_to_the_session(
+    mock_qb, mock_listen, mock_sleep, mock_core_factory
+):
+    """One session navigating must not make another session reload.
+
+    This used to be a module-level flag, so it was shared by everything.
+    """
+    first, second = mock_core_factory(), mock_core_factory()
+    first.browser_page_js_stale = False
+    second.browser_page_js_stale = False
+
+    browser.handle_browser_command("back", first)
+    mock_qb.reset_mock()
+    browser.handle_browser_command("numbers", second)
+
+    assert "reload" not in [call.args[0] for call in mock_qb.call_args_list]
+    assert first.browser_page_js_stale is True

@@ -37,7 +37,6 @@ core = None
 # back to the daemon, and "browser" is one it does own -- so without this guard,
 # saying it inside browser mode routed straight back into handle() and opened a
 # second, nested mode on top of the first.
-in_browser_mode = False
 
 # Number words for hint selection
 HINT_NUMBERS = {
@@ -316,6 +315,8 @@ def setup(c):
     """Store the core reference and write the required qutebrowser config."""
     global core
     core = c
+    c.browser_page_js_stale = False
+    c.in_browser_mode = False
     ensure_qutebrowser_config()
 
 
@@ -491,18 +492,15 @@ HINT_RETRY_DELAY = 0.6
 # getting elements" and scrolling silently does nothing. Reloading is the only
 # thing that reliably brings either back, and it is paid for when one of them is
 # next used rather than on every navigation.
-_needs_reload_before_page_js = False
 
 
-def _reload_if_page_js_is_stale(core=None):
+def _reload_if_page_js_is_stale(core):
     """Reload when a history navigation has left the page's JS unusable."""
-    global _needs_reload_before_page_js
-    if not _needs_reload_before_page_js:
+    if not core.browser_page_js_stale:
         return
-    _needs_reload_before_page_js = False
+    core.browser_page_js_stale = False
     logger.debug("  ↻ Reloading: page scripts don't survive a history navigation")
-    if core is not None:
-        core.speak("Reloading")
+    core.speak("Reloading")
     qb("reload")
     time.sleep(RELOAD_SETTLE)
 
@@ -511,7 +509,7 @@ def _reload_if_page_js_is_stale(core=None):
 RELOAD_SETTLE = 0.8
 
 
-def show_hints(core=None):
+def show_hints(core):
     """Show the numbered hints, reloading first if history navigation broke them."""
     _reload_if_page_js_is_stale(core)
     qb("hint")
@@ -729,7 +727,7 @@ def handle(cmd, core):
 
     # --- Enter browser mode (explicit) ---
     if cmd_lower in ["browser", "browser mode", "open browser", "launch browser"]:
-        if in_browser_mode:
+        if core.in_browser_mode:
             return True  # already there; don't stack a second one
         # Only launch when there is nothing to talk to. Running `qutebrowser`
         # again while an instance is up doesn't start a second browser -- it
@@ -768,17 +766,15 @@ def browser_mode(core):
     browser mode holds the microphone, and an
     unattended session ends on its own instead of leaving the wake word unreachable.
     """
-    global in_browser_mode
-
     core.speak("Browser")
     logger.info("=== BROWSER MODE ACTIVE ===")
     logger.info("Say commands directly. 'exit browser' to leave.")
 
-    in_browser_mode = True
+    core.in_browser_mode = True
     try:
         _run_browser_mode(core)
     finally:
-        in_browser_mode = False
+        core.in_browser_mode = False
 
 
 def _run_browser_mode(core):
@@ -839,8 +835,6 @@ def strip_filler(cmd_lower):
 
 def handle_browser_command(cmd_lower, core):
     """Execute a single in-browser command; None if it isn't recognised."""
-    global _needs_reload_before_page_js
-
     cmd_lower = strip_filler(cmd_lower)
 
     # Said a beat after hint mode already closed; absorbing it beats answering
@@ -887,12 +881,12 @@ def handle_browser_command(cmd_lower, core):
     # --- Navigation ---
     if cmd_lower in ["back", "go back", "previous page"]:
         qb("back")
-        _needs_reload_before_page_js = True
+        core.browser_page_js_stale = True
         return True
 
     if cmd_lower in ["forward", "go forward", "next page"]:
         qb("forward")
-        _needs_reload_before_page_js = True
+        core.browser_page_js_stale = True
         return True
 
     if cmd_lower in ["reload", "refresh", "reload page"]:

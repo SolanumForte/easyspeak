@@ -269,18 +269,13 @@ def paste_chord(wm_class=UNKNOWN):
 
 
 def clipboard_tools():
-    """Return the (copy, paste) commands for this session, or (None, None).
+    """Return the (copy, paste) commands, or (None, None) if wl-clipboard is absent.
 
-    wl-clipboard on Wayland, xclip on X11. Both are ordinary desktop packages;
-    without either there is no way to put text on the clipboard.
+    EasySpeak targets Wayland, so wl-clipboard is the only supported tool. Without
+    it there is no way to put text on the clipboard.
     """
     if shutil.which("wl-copy") and shutil.which("wl-paste"):
         return ["wl-copy"], ["wl-paste", "--no-newline"]
-    if shutil.which("xclip"):
-        return (
-            ["xclip", "-selection", "clipboard"],
-            ["xclip", "-selection", "clipboard", "-o"],
-        )
     return None, None
 
 
@@ -422,9 +417,9 @@ def insert_text(text):
     copy_cmd, paste_cmd = clipboard_tools()
     if copy_cmd is None:
         logger.warning(
-            "No clipboard tool found, so dictation is falling back to AT-SPI, "
-            "which Chromium-based apps accept and ignore. Install wl-clipboard "
-            "(Wayland) or xclip (X11) for text to reach the browser."
+            "wl-clipboard is not installed, so dictation is falling back to "
+            "AT-SPI, which Chromium-based apps accept and ignore. Install "
+            "wl-clipboard for text to reach the browser."
         )
         return insert_via_atspi(text)
 

@@ -57,6 +57,7 @@ overrides:
     - gir1.2-gtk-4.0
     - gir1.2-adw-1
     - adwaita-icon-theme     # provides the launcher icon
+    - wl-clipboard           # dictation places text by pasting
     recommends:
     - easyspeak-lang-en      # default language data; repo installs pull it automatically
     - gnome-shell            # provides `gnome-extensions` (mouse grid / indicator)
@@ -66,7 +67,6 @@ overrides:
     - wireplumber            # wpctl volume control
     - pulseaudio-utils       # paplay (chime + TTS fallback)
     - sound-theme-freedesktop  # wake/error chime sounds
-    - wl-clipboard           # dictation pastes text; xclip on X11
   rpm:
     depends:
     - portaudio
@@ -77,6 +77,7 @@ overrides:
     - gtk4
     - libadwaita
     - adwaita-icon-theme
+    - wl-clipboard           # dictation places text by pasting
     recommends:
     - easyspeak-lang-en
     - gnome-shell
@@ -86,4 +87,3 @@ overrides:
     - wireplumber
     - pulseaudio-utils
     - sound-theme-freedesktop
-    - wl-clipboard           # dictation pastes text; xclip on X11

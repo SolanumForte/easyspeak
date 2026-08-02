@@ -41,10 +41,10 @@ gsettings set org.gnome.desktop.interface toolkit-accessibility true
 ## Dictation types nothing
 
 Dictation places text by putting it on the clipboard and sending a paste
-keystroke. Install the clipboard tool for your session:
+keystroke. Install `wl-clipboard`:
 
 ```bash
-sudo dnf install wl-clipboard   # Wayland; use xclip on X11
+sudo dnf install wl-clipboard
 ```
 
 Without it, insertion falls back to the accessibility bridge, which
@@ -52,7 +52,7 @@ Chromium-based applications (qutebrowser, Electron apps) accept and silently
 discard — the log says so:
 
 ```
-No clipboard tool found, so dictation is falling back to AT-SPI, ...
+wl-clipboard is not installed, so dictation is falling back to AT-SPI, ...
 ```
 
 If you hear **"No text field focused"**, click into a text field first, or use

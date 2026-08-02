@@ -1,6 +1,5 @@
 """Browser Plugin - Qutebrowser voice control via IPC."""
 
-import contextlib
 import logging
 import re
 import subprocess
@@ -509,9 +508,8 @@ def listen_for_hint(core, retries_left=3):
     # Small delay to let hints render
     time.sleep(0.3)
 
-    # Clear audio buffer
-    with contextlib.suppress(Exception):
-        core.stream.read(core.stream.get_read_available(), exception_on_overflow=False)
+    core.speech.drain()
+    core.flush_stream()
 
     # Wait for speech
     first = core.wait_for_speech(timeout=10)

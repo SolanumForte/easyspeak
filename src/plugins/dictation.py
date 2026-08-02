@@ -22,7 +22,7 @@ SILENCE_DURATION = 0.7
 COMMANDS = [
     "notes - start dictation mode (say 'stop notes' to end)",
     "Punctuation: comma, period, question mark, exclamation mark, colon, semicolon",
-    "Editing: backspace, space, tab",
+    "Editing: backspace, backspace five, scratch that, space, tab",
     "Structure: new sentence, new line, new paragraph, enter",
     "Symbols: apostrophe, quote, dash, hyphen, at sign, hashtag, percent, asterisk",
 ]
@@ -32,8 +32,8 @@ core = None
 # Prompt to bias Whisper toward recognizing punctuation commands
 DICTATION_PROMPT = (
     "comma, period, new sentence, new paragraph, new line, question mark, "
-    "exclamation mark, colon, semicolon, stop notes, backspace, space, tab, "
-    "enter, apostrophe, quote, dash, hyphen, at sign, hashtag, percent"
+    "exclamation mark, colon, semicolon, stop notes, backspace, scratch that, "
+    "space, tab, enter, apostrophe, quote, dash, hyphen, at sign, hashtag, percent"
 )
 
 
@@ -81,6 +81,7 @@ def setup(c):
     """Store the core reference and enable the GNOME accessibility bridge."""
     global core
     core = c
+    c.dictation_last_length = 0
     ensure_gnome_accessibility()
     # Offer dictation to the keyboard (silent) activation path too: core runs
     # this while the hotkey combo is held, with no wake word spoken.
@@ -128,6 +129,7 @@ KEYCODES = {
     "super": 125,
     "insert": 110,
     "v": 47,
+    "backspace": 14,
 }
 
 DEFAULT_PASTE_CHORD = "ctrl+v"
@@ -545,9 +547,6 @@ def format_text(text):
     # Punctuation replacements - order matters!
     replacements = [
         # Editing commands
-        (r"\s*\bbackspace\b\s*", "\b"),
-        (r"\s*\bback space\b\s*", "\b"),
-        (r"\s*\bdelete\b\s*", "\b"),
         (r"\s*\bspace\b\s*", " "),
         (r"\s*\btab\b\s*", "\t"),
         # Sentence breaks - add space after
@@ -628,6 +627,72 @@ def format_text(text):
     return text.strip()
 
 
+SPOKEN_COUNTS = {
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+}
+
+MAX_BACKSPACES = 200
+
+UNDO_PHRASES = frozenset({"scratch that", "scratch this", "undo that", "undo this"})
+
+
+def _backspace_count(words):
+    """Return how many characters "backspace ..." asks for, or None if it isn't that.
+
+    A bare "backspace" is one; a trailing digit or number word is the count.
+    """
+    if not words or words[0] not in {"backspace", "delete"}:
+        return None
+    if len(words) == 1:
+        return 1
+    if len(words) > 2:
+        return None
+    tail = words[1]
+    if tail.isdigit():
+        return min(int(tail), MAX_BACKSPACES)
+    return SPOKEN_COUNTS.get(tail)
+
+
+def press_backspace(count):
+    """Send `count` backspace keystrokes; True when they were delivered."""
+    try:
+        from easyspeak.core import mediakeys
+
+        for _ in range(count):
+            mediakeys.tap_chord([KEYCODES["backspace"]])
+    except (ImportError, RuntimeError, OSError) as exc:
+        logger.warning("Backspace needs GNOME's RemoteDesktop interface: %s", exc)
+        return False
+    return True
+
+
+def _handle_delete(core, text):
+    """Run "backspace"/"scratch that" if that is what was said; True when it was."""
+    words = text.split()
+    count = _backspace_count(words)
+    if count is None and text in UNDO_PHRASES:
+        count = core.dictation_last_length
+        if not count:
+            core.speak("Nothing to scratch")
+            return True
+    if count is None:
+        return False
+    if press_backspace(count):
+        core.dictation_last_length = 0
+    else:
+        core.speak("Dictation isn't set up on this system.")
+    return True
+
+
 def _dictate_utterance(core, text):
     """Format one transcribed utterance, insert it, and give error feedback.
 
@@ -644,6 +709,8 @@ def _dictate_utterance(core, text):
     if formatted[0].isalpha():
         formatted = " " + formatted
     status = insert_text(formatted)
+    if status == INSERTED:
+        core.dictation_last_length = len(formatted)
     if status == NO_FOCUS:
         core.speak("No text field focused.")
         return True
@@ -727,6 +794,9 @@ def _dictation_session(core):
         if is_exit_phrase(text):
             core.speak("Done")
             return True
+
+        if _handle_delete(core, text):
+            continue
 
         if _dictate_utterance(core, text):
             return True

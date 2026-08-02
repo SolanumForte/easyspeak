@@ -13,9 +13,6 @@ COMMANDS = [
 core = None
 
 
-# evdev keycodes for the multimedia keys (stable Linux input ABI). Replaying these
-# lets gnome-settings-daemon produce its own change and native OSD (plus the chime
-# for volume) -- identical to pressing the keys, because it *is* the keys.
 KEY_MUTE = 113
 KEY_VOLUME_DOWN = 114
 KEY_VOLUME_UP = 115
@@ -155,11 +152,6 @@ def handle(cmd, core):
             brightness_down(core)
             return True
 
-    # Do Not Disturb. Two vocabularies point at the same setting from opposite
-    # directions: "do not disturb on" hides banners, but "notifications on" shows
-    # them -- so the direction word is read against whichever noun was spoken.
-    # Whole words throughout, because "notifications" contains the letters "on" and
-    # a substring test matched the direction inside the trigger word itself.
     dnd_named = "do not disturb" in cmd or "dnd" in words
     if dnd_named or "notifications" in words:
         turning_on = "on" in words or "enable" in words

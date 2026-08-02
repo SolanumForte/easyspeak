@@ -27,9 +27,6 @@ from easyspeak.data import data_text
 logger = logging.getLogger(__name__)
 
 EXTENSION_UUID = "gnome@easyspeak.dev"
-# UUIDs the extension shipped under before the rename to gnome@easyspeak.dev:
-# easyspeak-grid@local when it was just a mouse grid, then easyspeak@local. A
-# leftover copy under either is cleaned up at startup; see migrate_legacy_extensions.
 LEGACY_EXTENSION_UUIDS = ("easyspeak-grid@local", "easyspeak@local")
 REFRESH_UNIT_NAME = "easyspeak-extension-refresh.service"
 REFRESH_UNIT_TEMPLATE = REFRESH_UNIT_NAME + ".in"  # packaged template file
@@ -38,10 +35,6 @@ PRE_SHELL_TARGET = "gnome-session-pre.target"  # reached before org.gnome.Shell@
 # Cap each helper subprocess so a wedged session/user bus can't hang startup.
 SUBPROCESS_TIMEOUT = 5.0
 
-# Bundled assets, installed as a set: extension.js imports extension-helpers.js,
-# so they must travel together or the extension fails to load. The schema ships
-# pre-compiled (glib-compile-schemas isn't guaranteed present at install time);
-# subdirectory paths are staged in place by the copy below.
 EXTENSION_ASSETS = (
     "extension.js",
     "extension-helpers.js",
@@ -266,10 +259,6 @@ def install_refresh_unit():
     path = unit_path()
 
     if _system_unit_exists():
-        # The package owns the unit; don't shadow it with a user copy. Clear out a
-        # stale one a prior pip/dev install left — `~/.config/systemd/user` takes
-        # precedence over the packaged path and would point at a vanished
-        # interpreter, so it must go for the packaged unit to take effect.
         if path.is_file():
             _run_systemctl("disable", REFRESH_UNIT_NAME)
             with contextlib.suppress(OSError):
@@ -422,9 +411,6 @@ def activate_extension():
             return
 
         if refresh_extension_files(root, dest_dir) is RefreshResult.ERROR:
-            # refresh_extension_files already reported the write error (with the
-            # OSError detail) on stderr; add only the consequence, not a second
-            # description of the same failure.
             logger.warning(
                 "the panel indicator and grid commands will not work until "
                 "the GNOME extension is installed manually."

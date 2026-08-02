@@ -511,15 +511,8 @@ def listen_for_grid_commands(core):
     try:
         _run_grid_mode(core)
     finally:
-        # Covers every way out: close, click, drag, an idle timeout, or the tray
-        # taking the session away mid-mode. The drag is released first, while the
-        # bounds it needs for a release point still exist.
         _release_pending_drag()
         if grid_active:
-            # The mode ended without a command that closes the grid (idle timeout,
-            # tray sleep, quit). The daemon has already gone back to the wake word,
-            # so an overlay left drawn would sit over the desktop with nothing
-            # listening for it.
             logger.debug("  → Hiding grid left open by an ended mode")
             close_grid()
 

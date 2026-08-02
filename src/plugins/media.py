@@ -24,10 +24,6 @@ ACTIONS = {
     "back": "previous",
 }
 
-# Verbs too ambiguous to act on alone. Bare "stop" is a global control word, and
-# bare "back" means browser history far more often than the previous track -- it
-# used to be matched as a substring, so "go back" always reached this plugin.
-# Both now need the command to name what is playing.
 NEEDS_NOUN = {"stop", "back"}
 
 # Words naming what is being played. Ignored when picking the verb, so "pause the

@@ -33,11 +33,6 @@ COMMANDS = [
 
 core = None
 
-# True while browser_mode is running. Commands this plugin doesn't own are handed
-# back to the daemon, and "browser" is one it does own -- so without this guard,
-# saying it inside browser mode routed straight back into handle() and opened a
-# second, nested mode on top of the first.
-
 # Number words for hint selection
 HINT_NUMBERS = {
     "zero": "0",
@@ -167,23 +162,10 @@ SCROLL_BOTTOM_JS = (
 )
 
 
-# Lines this plugin requires in ~/.config/qutebrowser/config.py. Each is
-# checked grep-style (substring on the file as a whole) and appended
-# individually if absent — the user's other settings are left intact.
 REQUIRED_QUTEBROWSER_LINES = [
     "config.load_autoconfig(False)",
     "c.hints.chars = '0123456789'",
-    # Expired certificates on third-party ad and tracking resources raise a modal
-    # y/n prompt on a great many pages. There is no voice command that can answer
-    # it, so hands-free browsing stops dead until someone reaches for a keyboard.
-    # This blocks those sub-resources silently and still asks about the page the
-    # user actually navigated to, which is the value qutebrowser's own error
-    # message recommends.
     "c.content.tls.certificate_errors = 'ask-block-thirdparty'",
-    # Every site that wants to push notifications raises a modal y/n prompt, and
-    # there is no voice command that can answer one -- browsing simply stops until
-    # someone reaches for a keyboard. Same for location. Answering them in advance
-    # is what keeps the browser usable hands-free.
     "c.content.notifications.enabled = False",
     "c.content.geolocation = False",
     # Autoplaying video ads talk over the wake word and hold the microphone's
@@ -192,11 +174,6 @@ REQUIRED_QUTEBROWSER_LINES = [
 ]
 
 
-# Interpreters to ask about python-adblock, in order. A bare `python3` resolves to
-# the virtualenv's own interpreter when one is active, which never has a distro
-# package installed -- so asking only that concludes the dependency is missing on
-# exactly the setup most likely to have it. (The AT-SPI helper in the dictation
-# plugin probes the same way, for the same reason.)
 ADBLOCK_CANDIDATES = ("python3", "/usr/bin/python3", "/usr/bin/python")
 
 
@@ -278,10 +255,6 @@ def ensure_qutebrowser_config():
     for line in wanted:
         if line in lines:
             continue
-        # Replace an earlier value for the same setting rather than appending a
-        # second assignment. Both would work -- the last one wins -- but the file
-        # would grow a new line every time a setting changed, which is the user's
-        # config being made a mess of.
         setting = _setting_name(line)
         index = next(
             (
@@ -490,22 +463,15 @@ def parse_spoken_url(spoken):
 # arriving while hints are already showing, instead of tearing the mode down.
 HINT_TRIGGERS = ("numbers", "number", "links", "link", "hints", "hint")
 
-# How long to let a page settle before asking for hints a second time. A history
-# restore can leave the page briefly unwalkable, and hinting again immediately
 # fails the same way.
 HINT_RETRY_DELAY = 0.6
 
-# Set by back/forward. Both hinting and scrolling run JavaScript in the page --
-# hinting to enumerate elements, scrolling to find the scrollable container under
-# the cursor -- and a history navigation restores from cache without a load, so
-# that JS world is never re-established. :hint fails with "Unknown error while
-# getting elements" and scrolling silently does nothing. Reloading is the only
-# thing that reliably brings either back, and it is paid for when one of them is
-# next used rather than on every navigation.
-
 
 def _reload_if_page_js_is_stale(core):
-    """Reload when a history navigation has left the page's JS unusable."""
+    """Reload the page if a history navigation left its scripts unusable.
+
+    `core.browser_page_js_stale` is set by back and forward and cleared here.
+    """
     if not core.browser_page_js_stale:
         return
     core.browser_page_js_stale = False
@@ -525,7 +491,7 @@ def show_hints(core):
     qb("hint")
 
 
-def scroll_page(js, core=None):
+def scroll_page(js, core):
     """Scroll the page, reloading first if history navigation broke its scripts."""
     _reload_if_page_js_is_stale(core)
     qb(f"jseval -q {js}")
@@ -538,9 +504,6 @@ def listen_for_hint(core, retries_left=3):
     listener open, so a run of mishearings can't recurse without end.
     """
     logger.info("  🔢 Say hint number (e.g. 'zero two'), 'exit links' to cancel")
-    # "Ready", not "Numbers": the microphone hears every spoken reply, and any of
-    # the words that ask for hints would come straight back as a fresh request
-    # for them. Every confirmation below is chosen the same way.
     core.speak("Ready")
 
     # Small delay to let hints render
@@ -553,13 +516,6 @@ def listen_for_hint(core, retries_left=3):
     # Wait for speech
     first = core.wait_for_speech(timeout=10)
     if not first:
-        # Silence here usually means there was nothing to read out. qutebrowser
-        # enumerates hintable elements with injected JS, and that fails outright
-        # on some pages -- notably after going back, where a history restore
-        # leaves the page in a state it can't walk ("Unknown error while getting
-        # elements"). The error is shown in the browser rather than returned over
-        # IPC, so there is nothing here to test for; the page is simply given a
-        # moment to settle and asked once more.
         if retries_left > 0:
             logger.debug("  ↻ No hints appeared; asking again")
             time.sleep(HINT_RETRY_DELAY)
@@ -595,12 +551,6 @@ def listen_for_hint(core, retries_left=3):
     cmd_lower = cmd.lower().strip(".,!? ")
     logger.debug("  ← %s", cmd_lower)
 
-    # Asked for hints again. Usually that means none appeared -- qutebrowser's
-    # :hint fails outright on some pages ("Unknown error while getting elements")
-    # and the user is simply repeating themselves. Assuming they were already on
-    # screen left the listener waiting for a number against a blank page, so
-    # re-issue the command instead. Escape first, because hinting on top of a
-    # half-open hint mode is what produces that error in the first place.
     if cmd_lower in HINT_TRIGGERS:
         if retries_left <= 0:
             logger.info("  ✗ Hints aren't appearing on this page")
@@ -648,10 +598,6 @@ def listen_for_hint(core, retries_left=3):
             time.sleep(1.0)
             qb("fake-key <Escape>")
         else:
-            # Not a hint - might be a browser command, pass it through.
-            # Escape rather than :mode-leave: leaving is only legal from a
-            # special mode, and following a hint has often already returned
-            # qutebrowser to normal, where the command errors out.
             logger.info("  ? Heard '%s', which isn't a hint number", cmd_lower)
             logger.debug("  ↪ Not a hint, trying as command: '%s'", cmd_lower)
             qb("fake-key <Escape>")
@@ -660,15 +606,6 @@ def listen_for_hint(core, retries_left=3):
     logger.debug("  [listen_for_hint returning - complete]")
 
 
-# Global control phrases owned by the sleep and base plugins. This plugin is
-# routed before them (filename order), and qb() would spawn a fresh qutebrowser
-# window for each — e.g. "stop" -> :stop, "go to sleep" -> :quickmark-load
-# sleep. Decline them so they fall through to the plugin that actually owns
-# them (deactivate / quit). Exact-matched quit words mirror zz_base, plus a
-# bare "stop" — no longer a quit word, but it still must not reach qb, which
-# would open qutebrowser. The sleep phrases are substring-matched per sleep.py.
-# Leaving browser mode and closing the browser were the same list, so "close
-# browser" only ever stepped out of the mode and left the window sitting there.
 LEAVE_BROWSER_MODE = (
     "exit browser",
     "leave browser",
@@ -739,13 +676,6 @@ def handle(cmd, core):
     if cmd_lower in ["browser", "browser mode", "open browser", "launch browser"]:
         if core.in_browser_mode:
             return True  # already there; don't stack a second one
-        # Only launch when there is nothing to talk to. Running `qutebrowser`
-        # again while an instance is up doesn't start a second browser -- it
-        # reaches the running one over IPC and opens the start page, raising a new
-        # tab and taking keyboard focus off whatever the user had clicked. A
-        # dictated phrase then pasted into the page body instead of their field.
-        # clean_env keeps EasySpeak's own library paths out of the browser, which
-        # every other plugin already does when launching a desktop app.
         if not _qutebrowser_running(core):
             core.host_run(["qutebrowser"], background=True, clean_env=True)
         browser_mode(core)
@@ -789,9 +719,6 @@ def browser_mode(core):
 
 def _run_browser_mode(core):
     """Dispatch one browser command per utterance until the mode ends."""
-    # Three minutes, not one: reading a page is a perfectly normal thing to spend
-    # a minute doing, and having the mode expire underneath you mid-article is how
-    # commands silently stop working.
     for cmd_lower in core.listen_modal("browser", timeout=30, idle_timeout=180):
         logger.debug("  [browser] %s", cmd_lower)
 
@@ -818,10 +745,6 @@ def _run_browser_mode(core):
         if handle_browser_command(cmd_lower, core):
             continue
 
-        # Not a browser command. Browser mode used to be a dead end -- "notes",
-        # "open downloads" and the rest were logged as unknown and dropped, so
-        # there was no way to dictate into a page without leaving first. Hand it
-        # to the daemon instead, then carry on browsing when it comes back.
         logger.debug("  ↪ Not a browser command, routing: %s", cmd_lower)
         if not core.route_command(cmd_lower):
             # A quit command ("goodbye"); take the daemon down with us.
@@ -829,9 +752,6 @@ def _run_browser_mode(core):
             return
 
 
-# Whisper often prefixes a command with a word the user didn't emphasise --
-# "and scroll down", "so back". Dropping those saves the command rather than
-# answering "I didn't understand" to something perfectly clear.
 FILLER_PREFIXES = ("and ", "so ", "then ", "okay ", "ok ", "um ", "uh ", "now ")
 
 
@@ -949,9 +869,6 @@ def handle_browser_command(cmd_lower, core):
         qb("tab-prev")
         return True
 
-    # "tab two", "switch to tab 2", "close tab 2" -- one place for every way of
-    # naming a tab by number, because there is no reason to make someone remember
-    # which of those phrasings was implemented.
     tab_num = parse_tab_number(cmd_lower)
     if tab_num is not None:
         if cmd_lower.startswith("close"):
@@ -981,8 +898,6 @@ def handle_browser_command(cmd_lower, core):
         return True
 
     # --- Escape ---
-    # Escape rather than :mode-leave, which is only legal from a special mode and
-    # errors out when qutebrowser is already in normal.
     if cmd_lower in ["escape", "cancel", "nevermind"]:
         qb("fake-key <Escape>")
         return True

@@ -16,14 +16,6 @@ logger = logging.getLogger(__name__)
 NAME = "dictation"
 DESCRIPTION = "Voice dictation into any text field"
 
-# Recording limits for a sentence rather than a command. Core's defaults assume a
-# few words: a third of a second of quiet ends the recording and nothing past five
-# seconds is captured at all -- so dictation stopped listening during the pause in
-# the middle of a sentence, and cut off anyone who kept talking.
-#
-# The pause is a direct trade: too short and it cuts in mid-sentence, too long and
-# every phrase lags before it appears. 0.7s clears a normal breath while keeping
-# the wait after speaking short enough not to be felt as a delay.
 MAX_RECORD_SECONDS = 20.0
 SILENCE_DURATION = 0.7
 
@@ -98,24 +90,13 @@ def setup(c):
         )
 
 
-# insert_text() outcomes — kept distinct so the spoken feedback is accurate:
-# the text went in, no editable field was focused, or the AT-SPI backend
-# couldn't even start (no PyGObject/typelib, no accessibility bus).
 INSERTED = "inserted"
 NO_FOCUS = "no_focus"
 BACKEND_ERROR = "backend_error"
 
-# The AT-SPI logic lives in a sibling module run as a script in an interpreter
-# that has PyGObject (see atspi_python). It's a real file, not an embedded
-# string, so it gets linted and unit-tested.
 ATSPI_HELPER = str(Path(__file__).with_name("_atspi_insert.py"))
 
 
-# Every way of saying "finish dictating", generated rather than hand-listed. The
-# list used to be written out by hand and had gaps: "stop notes" and "stop note"
-# were both there, but only "close notes" -- so saying "close note" stayed in
-# dictation and typed the words instead, along with every command spoken after it.
-# The nouns include Whisper's usual mishearings of "notes".
 EXIT_VERBS = ("stop", "close", "closed", "end", "exit", "done", "finish", "quit")
 EXIT_NOUNS = (
     "notes",
@@ -138,12 +119,6 @@ def is_exit_phrase(text):
 
 # --- Insertion ---------------------------------------------------------------
 #
-# Text reaches an application by clipboard and paste, not by accessibility-level
-# insertion. Every toolkit implements paste; AT-SPI insertion is widely stubbed
-# out -- Chromium-based apps (qutebrowser, Electron) accept the call, report
-# success, and discard the text, so dictation transcribed perfectly and nothing
-# appeared. Pasting needs no per-application knowledge, which is the point: the
-# alternative was a table of toolkit quirks that grows forever.
 
 # evdev keycodes for the paste chord (stable Linux input ABI).
 KEYCODES = {
@@ -407,10 +382,6 @@ def insert_text(text):
     user whatever they had copied. Falls back to AT-SPI when no clipboard tool is
     installed, which is the only case where the old path was ever the better one.
     """
-    # A paste goes wherever the keyboard is pointing, and if that's a web page
-    # with no field focused it vanishes without a trace -- the keystroke is sent,
-    # the clipboard held the text, and nothing reports a problem. Ask first, so
-    # the user is told rather than left wondering.
     if not has_focused_text_field():
         return NO_FOCUS
 
@@ -425,10 +396,6 @@ def insert_text(text):
 
     global _clipboard_generation
 
-    # Looked up once and passed on. This used to be read three separate times per
-    # insertion -- once to pick the chord and twice for the log lines -- and each
-    # one is a gdbus round trip sitting between the user speaking and the text
-    # appearing.
     target = focused_wm_class()
 
     saved = read_clipboard(paste_cmd)
@@ -439,16 +406,8 @@ def insert_text(text):
     _clipboard_generation += 1
     chord = paste_chord(target)
 
-    # qutebrowser is modal: in normal mode a keystroke is a command, not text, and
-    # Ctrl+V isn't bound there at all -- the paste simply goes nowhere. Following a
-    # hint into a field auto-enters insert mode, which is why dictation worked
-    # after "numbers" and silently did nothing without it. Asking for insert mode
-    # first makes it work either way. Safe to send when already in insert.
     if target in BROWSER_WM_CLASSES:
         _enter_browser_insert_mode()
-    # Say which mechanism ran and where it aimed. Insertion used to report success
-    # without naming the path it took or the window it targeted, so a paste that
-    # went nowhere looked exactly like one that worked.
     logger.info(
         "⌨️  pasting %d chars into %s with %s",
         len(text),
@@ -471,14 +430,8 @@ def insert_text(text):
         )
         return BACKEND_ERROR
 
-    # Name where it went. Paste lands wherever the keyboard focus is, and a page
-    # with no focused field swallows it silently -- so the log has to say which
-    # window received the keystroke, or an empty text box is unexplainable.
     logger.debug("pasted into %s", target or "an unknown window")
 
-    # The restore waits for the paste to land, so it happens on a thread rather
-    # than in front of the user: this was a fixed delay plus another subprocess
-    # between finishing a sentence and seeing it.
     _restore_clipboard_later(copy_cmd, saved, _clipboard_generation)
     return INSERTED
 
@@ -496,11 +449,6 @@ def _restore_clipboard_later(copy_cmd, saved, generation):
     threading.Thread(target=_restore, daemon=True).start()
 
 
-# Interpreters tried for the AT-SPI helper, in order, when
-# EASYSPEAK_ATSPI_PYTHON isn't set. A bare `python3` comes first because it is
-# usually right -- but inside an activated virtualenv it resolves to the venv's
-# own interpreter, which has no PyGObject, so the distro paths follow as the
-# fallback that actually carries python3-gobject.
 ATSPI_CANDIDATES = ("python3", "/usr/bin/python3", "/usr/bin/python")
 
 # Exactly what the helper does on startup, so a candidate is only accepted if the
@@ -750,9 +698,6 @@ def handle(cmd, core):
 
         logger.info("🎙️ Dictation mode - say 'stop notes' to end")
 
-        # Sentence-length recording, not command-length: the command defaults cut
-        # the recording off during a mid-sentence pause and truncated anything
-        # past five seconds.
         try:
             return _dictation_session(core)
         finally:

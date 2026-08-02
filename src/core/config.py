@@ -37,19 +37,11 @@ NETWORK_ALLOWED = OFFLINE_MODE == "relaxed"
 # --- Wake word ---
 WAKE_WORD = "hey_jarvis"  # OpenWakeWord model name
 
-# How the wake word is said aloud, for telling the user they need it again. A mode
-# ending is otherwise invisible: commands that worked a moment ago start being
-# ignored, with nothing to say why.
 WAKE_WORD_SPOKEN = "Hey Jarvis"
 WAKE_THRESHOLD = 0.5
 WAKE_COOLDOWN = 3.0  # Seconds to ignore wake word after trigger
 
 # --- Audio thresholds ---
-# Mean absolute amplitude below which a chunk counts as silence. This is only the
-# floor: the real threshold is measured from the room at startup, because a fixed
-# one assumes a quiet room. Where the ambient level sits above it -- a desk fan, a
-# desktop machine, an air conditioner -- silence is never detected at all, so every
-# recording runs to its full time cap and every command feels slow.
 SILENCE_THRESHOLD = 300
 
 # Never calibrate above this: speech itself sits well above it, and a threshold
@@ -71,8 +63,6 @@ MISUNDERSTAND_GRACE = 4.0  # Seconds to ignore repeat misses after feedback
 FOLLOWUP_IDLE_ROUNDS = 2  # Quiet listens tolerated before a command session ends
 
 # --- Keyboard (silent) activation ---
-# Hold EASYSPEAK_HOTKEY to dictate; an empty value or `off`/`none` disables it
-# (an empty combo leaves the listener inert). core.hotkey validates the keys.
 _hotkey = os.environ.get("EASYSPEAK_HOTKEY", "ctrl+shift").strip()
 HOTKEY_COMBO = "" if _hotkey.lower() in ("", "off", "none") else _hotkey
 
@@ -119,8 +109,6 @@ COMMAND_PROMPT = (
 
 
 # --- Desktop sounds ---
-# Default to the FHS sound-theme path; on NixOS the flake overrides
-# EASYSPEAK_SOUNDS_DIR to the Nix store copy, which actually exists.
 SOUNDS_DIR = Path(
     os.environ.get("EASYSPEAK_SOUNDS_DIR", "/usr/share/sounds/freedesktop/stereo")
 )

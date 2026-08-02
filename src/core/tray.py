@@ -44,11 +44,6 @@ COMMAND_UNMUTE = "unmute"
 COMMAND_HELP = "help"  # open the documentation page in the default browser
 COMMAND_ABOUT = "about"  # open the libadwaita About window
 
-# The About window is its own process: the indicator lives in a GNOME Shell
-# extension that can't host GTK, so the daemon spawns this script instead. It's
-# run by file path (not `-m`) because the PyGObject interpreter it runs in (see
-# _run_menu_action) doesn't have the `easyspeak` package installed; about.py is
-# self-contained, so a plain path works there and in our own interpreter alike.
 ABOUT_HELPER = str(Path(__file__).with_name("about.py"))
 
 # Shared with the extension's ScreenshotManager, which creates ~/.cache/easyspeak.
@@ -64,11 +59,6 @@ MUTED_REPUSH_INTERVAL = 5.0
 # Cap the gdbus call so a wedged session bus can't hang the audio loop.
 GDBUS_TIMEOUT = 5.0
 
-# How long to watch a launched helper before assuming its window opened. A
-# helper that can't start (bad interpreter, missing GTK/libadwaita, no display)
-# exits within this window; a working GUI keeps running, so we stop watching and
-# leave it detached. Only paid when a helper is actually launched, and only in
-# full while one succeeds — a failure returns as soon as the process dies.
 HELPER_STARTUP_GRACE = 1.5
 
 
@@ -151,9 +141,6 @@ class Tray:
         if self._run_menu_action(command):
             return TrayAction.CONTINUE
         if command == COMMAND_MUTE or self._sleep_requested:
-            # A voice "go to sleep" reaches here via _sleep_requested, and the
-            # sleep plugin has already spoken; a button mute (COMMAND_MUTE) has
-            # not, so only then does the tray announce the deactivation itself.
             announce = command == COMMAND_MUTE
             self._sleep_requested = False
             return self.sleep(release_mic, acquire_mic, announce=announce)

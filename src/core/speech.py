@@ -20,9 +20,6 @@ from .config import PIPER_BIN, PIPER_MODEL
 
 logger = logging.getLogger(__name__)
 
-# Seconds to wait after spawning the piper -> player pipeline before trusting
-# it: long enough for an immediate failure (bad model, bad flag) to surface,
-# short enough to barely register during the one-time warmup.
 SPEECH_SPAWN_GRACE = 0.2
 
 
@@ -155,15 +152,7 @@ class SpeechPipeline:
                 stdout=self._player.stdin,
                 stderr=subprocess.DEVNULL,
             )
-            # Hand the write end of the player's input pipe entirely to piper.
-            # If the parent kept its own copy open, the player would never see
-            # EOF when piper exits and would hang forever in read() (a dead
-            # piper leaving an immortal pw-play behind), wedging the pipeline.
             self._player.stdin.close()
-            # A bad model path or unsupported player flag lets Popen succeed but
-            # the process dies milliseconds later. Give it a brief grace period
-            # and confirm both are still alive, so warmup reports the failure
-            # once instead of speak() rebuilding a dead pipeline on every phrase.
             time.sleep(SPEECH_SPAWN_GRACE)
             if not (self._alive(self._piper) and self._alive(self._player)):
                 msg = "speech pipeline exited immediately after start"

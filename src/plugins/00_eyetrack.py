@@ -159,9 +159,6 @@ def run_tracking():
         tracking_active = False
         return
 
-    # One-euro filters for each axis
-    # min_cutoff: lower = smoother (try 0.5-2.0)
-    # beta: higher = more responsive to fast moves (try 0.001-0.01)
     filter_yaw = OneEuroFilter(freq=30.0, min_cutoff=0.8, beta=0.005)
     filter_pitch = OneEuroFilter(freq=30.0, min_cutoff=0.8, beta=0.005)
 

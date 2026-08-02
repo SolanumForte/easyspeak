@@ -27,9 +27,6 @@ from .gnome_extension import (
 
 logger = logging.getLogger(__name__)
 
-# Bundled desktop files (package data), and the basename they install under. The
-# autostart copy keeps the launcher's basename so a per-user file can override a
-# packaged /etc/xdg/autostart entry of the same name.
 AUTOSTART_TEMPLATE = "easyspeak-autostart.desktop"
 DESKTOP_TEMPLATE = "easyspeak.desktop"
 INSTALLED_DESKTOP_NAME = "easyspeak.desktop"

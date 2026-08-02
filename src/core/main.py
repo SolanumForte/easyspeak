@@ -45,15 +45,9 @@ from .wakeword import WakeWordModel
 
 logger = logging.getLogger(__name__)
 
-# Players tried for the short desktop sounds, in order. paplay first because it
-# is what the docs install; the others cover a session that has one but not the
-# others. Whichever answers first is remembered.
 SOUND_PLAYERS = (["paplay"], ["pw-play"], ["canberra-gtk-play", "-f"])
 SOUND_TIMEOUT = 5.0
 
-# Spoken forms of the wake word to strip off a command. Users say "Hey Jarvis,
-# numbers" out of habit inside a mode that is already listening, and a mode that
-# left the prefix on simply failed to match anything.
 WAKE_PREFIXES = (
     "hey jarvis",
     "hey jarvis,",
@@ -466,16 +460,8 @@ class EasySpeak:
                 return pcm
         return None
 
-    # Whisper hands its own initial_prompt back as the transcription when it is
-    # given near-silence, so a "command" that is a verbatim run of the prompt is
-    # noise. Real commands are short ("three seven five", "right click"), so only a
-    # long run counts as an echo and a genuine one-word "six" still lands.
     PROMPT_ECHO_MIN_WORDS = 4
 
-    # Spoken digits are exempt: a long zone chain ("one two three four") is a real
-    # grid command that happens to be in prompt order, and an all-digit echo only
-    # zooms the grid — harmless, and the next silent round still ends the mode. The
-    # echoes that must be caught always carry an action word (scroll, click, stop).
     NUMBER_WORDS = frozenset(
         {
             "zero",
@@ -515,9 +501,6 @@ class EasySpeak:
         `initial_prompt` back when given near-silence, and grid mode was executing
         that as a command.
         """
-        # Handed to Whisper as samples rather than a file. Writing a WAV to /tmp
-        # and having the model read and decode it again put disk I/O and an audio
-        # decode between the user finishing a sentence and seeing it.
         samples = np.frombuffer(audio_data, dtype=np.int16).astype(np.float32) / 32768.0
 
         use_prompt = prompt or COMMAND_PROMPT
@@ -530,15 +513,9 @@ class EasySpeak:
             language="en",
             # Nothing here reads timestamps, and generating them costs tokens.
             without_timestamps=True,
-            # Each utterance stands alone. Carrying context between them makes
-            # latency grow over a dictation session and feeds Whisper's habit of
-            # repeating itself on quiet audio.
             condition_on_previous_text=False,
         )
         text = " ".join([s.text for s in segments]).strip()
-        # The wait between finishing a sentence and seeing it is mostly this.
-        # Logged so tuning is a measurement rather than a guess: compare it
-        # against the silence window to see which one to reach for.
         logger.debug(
             "transcribed %.1fs of audio in %.2fs",
             len(audio_data) / 32000,
@@ -589,11 +566,6 @@ class EasySpeak:
         punctuation. The generator simply stops when the mode should end, so a
         caller's `for` loop falls through to its own cleanup.
         """
-        # Plugins announce the mode ("Dictation", "Browser", "Grid") immediately
-        # before calling this, so wait that out and empty the microphone before the
-        # first listen. Otherwise the announcement is still playing when recording
-        # starts and lands on the front of the user's first sentence -- "Dictation
-        # search for potatoes".
         if self.spoke:
             self._drain_feedback()
             self.spoke = False
@@ -607,10 +579,6 @@ class EasySpeak:
                 self.exit_requested = True
                 return
             if action is TrayAction.RESUME:
-                # Just woke from sleep: the mode's state (grid bounds, hint
-                # overlay, tracking centre) is stale, so hand control back to the
-                # wake-word loop rather than resuming mid-mode. Announced, because
-                # this was the one way out of a mode that said nothing at all.
                 logger.info("%s mode ended: reactivated", label.capitalize())
                 self.speak(f"Leaving {label}. Say {WAKE_WORD_SPOKEN} to continue.")
                 return
@@ -618,9 +586,6 @@ class EasySpeak:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 logger.info("%s mode ended: idle", label.capitalize())
-                # Say what changed, not just that something did. Commands that
-                # worked a moment ago now need the wake word in front of them, and
-                # "Leaving browser" doesn't tell anyone that.
                 self.speak(f"Leaving {label}. Say {WAKE_WORD_SPOKEN} to continue.")
                 return
 
@@ -648,15 +613,6 @@ class EasySpeak:
             self.spoke = False
             yield spoken
 
-            # Control returns here once the plugin has handled that command, which
-            # it may well have answered out loud. With a voice installed the open
-            # microphone hears the reply, transcribes it, and hands it back as the
-            # next command -- which turned "Sorry, I didn't understand." into an
-            # endless conversation with itself. The wake-word loop already avoids
-            # this by ending its session whenever a command speaks; a mode can't
-            # end, so it waits for playback to finish and drops whatever the
-            # microphone caught of it instead. The deadline restarts afterwards,
-            # since draining takes real time that isn't the user being idle.
             if self.spoke:
                 self._drain_feedback()
                 self.spoke = False
@@ -804,9 +760,6 @@ class EasySpeak:
             logger.error("Cannot start EasySpeak: %s", exc)  # noqa: TRY400
             raise SystemExit(1) from exc
 
-        # The GNOME Shell extension powers both the panel indicator and the
-        # mouse grid, so core (not a plugin) owns installing/refreshing/enabling
-        # it before anything starts driving it over D-Bus.
         ensure_extension()
 
         logger.info("\nLoading plugins...")
@@ -834,10 +787,6 @@ class EasySpeak:
 """)
 
         try:
-            # PortAudio probes every ALSA/JACK device on init, spamming stderr
-            # about hardware this machine lacks; redirect fd 2 to silence that
-            # C-level noise. PyAudio init emits no Python stderr of its own; the
-            # stream is opened separately by _open_stream().
             with suppressed_c_stderr():
                 self.audio = pyaudio.PyAudio()
             self._open_stream()

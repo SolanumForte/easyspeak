@@ -593,6 +593,41 @@ def test_handle_show_grid_commands(mock_show_grid, mock_listen, command, mock_co
 @pytest.mark.parametrize(
     ["command"],
     [
+        ["upgrade"],
+        ["degrade the image"],
+        ["congratulations"],
+    ],
+)
+@patch.object(mousegrid_plugin, "listen_for_grid_commands")
+@patch.object(mousegrid_plugin, "show_grid")
+def test_handle_ignores_words_merely_containing_a_trigger(
+    mock_show_grid, mock_listen, command, mock_core
+):
+    """When a trigger only appears inside a longer word then the grid stays closed."""
+    result = mousegrid_plugin.handle(command, mock_core)
+
+    assert result is None
+    assert not mock_show_grid.called
+
+
+@patch.object(mousegrid_plugin, "listen_for_grid_commands")
+@patch.object(mousegrid_plugin, "show_grid")
+def test_handle_again_ignores_words_containing_a_trigger(
+    mock_show_grid, mock_listen, mock_core
+):
+    """When "again" only appears inside a longer word then the grid is not reopened."""
+    mousegrid_plugin.last_bounds = (100, 200, 300, 400)
+
+    result = mousegrid_plugin.handle("against the wall", mock_core)
+
+    assert result is None
+    assert not mock_show_grid.called
+    assert not mock_listen.called
+
+
+@pytest.mark.parametrize(
+    ["command"],
+    [
         ["grid close"],
         ["grid hide"],
     ],

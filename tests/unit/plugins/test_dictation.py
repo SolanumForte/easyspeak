@@ -814,7 +814,7 @@ def test_insert_text_reports_a_failed_copy(monkeypatch, readlog):
 def test_insert_text_falls_back_without_a_clipboard_tool(
     mock_atspi, mock_focus, monkeypatch
 ):
-    """With no wl-clipboard or xclip, the old accessibility path is all there is."""
+    """With no wl-clipboard, the old accessibility path is all there is."""
     monkeypatch.setattr(dictation.shutil, "which", lambda _name: None)
 
     assert dictation.insert_text("hello") == dictation.INSERTED
@@ -831,18 +831,11 @@ def test_clipboard_tools_prefers_wayland(monkeypatch):
     assert paste_cmd[0] == "wl-paste"
 
 
-def test_clipboard_tools_falls_back_to_xclip(monkeypatch):
-    """On X11 there is no wl-clipboard, but xclip does the same job."""
-    monkeypatch.setattr(
-        dictation.shutil,
-        "which",
-        lambda name: "/usr/bin/xclip" if name == "xclip" else None,
-    )
+def test_clipboard_tools_without_wl_clipboard(monkeypatch):
+    """EasySpeak targets Wayland, so wl-clipboard is the only supported tool."""
+    monkeypatch.setattr(dictation.shutil, "which", lambda _name: None)
 
-    copy_cmd, paste_cmd = dictation.clipboard_tools()
-
-    assert copy_cmd[0] == "xclip"
-    assert "-o" in paste_cmd
+    assert dictation.clipboard_tools() == (None, None)
 
 
 @pytest.mark.parametrize(

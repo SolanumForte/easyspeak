@@ -101,9 +101,9 @@ stripped before matching, since Whisper adds them.
 
 ## Dictation
 
-Dictation places text by pasting it, which needs `wl-clipboard` (Wayland) or
-`xclip` (X11) installed, and needs a text field focused. In the browser, use
-`numbers` and pick the hint on the field first.
+Dictation places text by pasting it, which needs `wl-clipboard` installed and a
+text field focused. In the browser, use `numbers` and pick the hint on the field
+first.
 
 | Command | Action |
 |---------|--------|

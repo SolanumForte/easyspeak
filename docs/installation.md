@@ -68,8 +68,8 @@ sudo dnf install \
 `wl-clipboard` is what dictation uses to place text. It types by putting the
 text on the clipboard and sending a paste keystroke, because accessibility-level
 insertion is silently ignored by Chromium-based applications — they accept the
-call, report success, and discard the text. Without `wl-clipboard` (or `xclip` on
-X11) dictation falls back to that path and quietly does nothing in a browser.
+call, report success, and discard the text. Without `wl-clipboard`, dictation
+falls back to that path and quietly does nothing in a browser.
 
 `python3-gobject` and `libadwaita` power the tray menu's **About EasySpeak**
 window. They ship with any GNOME desktop, so they're usually already present;

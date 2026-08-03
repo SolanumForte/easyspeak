@@ -690,3 +690,16 @@ class TestRequireWakeWord:
             list(easy.listen_modal("browser"))
 
         assert not easy.wait_for_wake.called
+
+    def test_a_wake_gated_mode_is_optional(self, easy):
+        """Dictation captures continuous speech, so it is never wake-gated."""
+        easy.require_wake_word = True
+        easy.wait_for_wake = Mock()
+        drive(easy, [b"a"], ["hello there"])
+
+        with clock():
+            assert list(easy.listen_modal("dictation", wake_gated=False)) == [
+                "hello there"
+            ]
+
+        assert not easy.wait_for_wake.called

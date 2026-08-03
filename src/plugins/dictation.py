@@ -756,6 +756,7 @@ def _dictation_session(core):
         idle_timeout=60,
         max_record_seconds=MAX_RECORD_SECONDS,
         silence_duration=SILENCE_DURATION,
+        wake_gated=False,
     ):
         logger.debug("   Raw: %s", text)
 

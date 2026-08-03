@@ -226,6 +226,44 @@ def _setting_name(line):
     return match.group(1) if match else None
 
 
+SOFTWARE_RENDERING_LINE = "c.qt.args = ['disable-gpu-compositing']"
+
+ADBLOCK_OFF_LINE = "c.content.blocking.enabled = False"
+
+
+def set_config_line(line, *, wanted):
+    """Add or remove one line in qutebrowser's config.py, keyed on its setting.
+
+    Returns None when the config can't be written, so the caller can say why.
+    """
+    cfg = Path.home() / ".config" / "qutebrowser" / "config.py"
+    try:
+        cfg.parent.mkdir(parents=True, exist_ok=True)
+        existing = cfg.read_text() if cfg.exists() else ""
+        kept = [
+            text
+            for text in existing.splitlines()
+            if _setting_name(text) != _setting_name(line)
+        ]
+        if wanted:
+            kept.append(line)
+        cfg.write_text("\n".join(kept) + "\n")
+    except OSError as exc:
+        logger.warning("Could not write %s: %s", cfg, exc)
+        return None
+    return wanted
+
+
+def _apply_config_line(core, line, spoken, *, wanted):
+    """Write a config toggle and restart qutebrowser so it takes effect."""
+    if set_config_line(line, wanted=wanted) is None:
+        core.speak("Could not write the browser config.")
+        return True
+    core.speak(f"{spoken}. Restarting the browser.")
+    qb("restart")
+    return True
+
+
 def ensure_qutebrowser_config():
     """Bring qutebrowser's config.py in line with what EasySpeak needs.
 
@@ -905,6 +943,27 @@ def handle_browser_command(cmd_lower, core):
     if cmd_lower in ["escape", "cancel", "nevermind"]:
         qb("fake-key <Escape>")
         return True
+
+    # --- Browser config toggles ---
+    if cmd_lower in ["software rendering", "fix rendering", "fix the display"]:
+        return _apply_config_line(
+            core, SOFTWARE_RENDERING_LINE, "Software rendering on", wanted=True
+        )
+
+    if cmd_lower in ["hardware rendering", "restore rendering"]:
+        return _apply_config_line(
+            core, SOFTWARE_RENDERING_LINE, "Hardware rendering on", wanted=False
+        )
+
+    if cmd_lower in ["allow ads", "stop blocking ads", "disable ad blocking"]:
+        return _apply_config_line(
+            core, ADBLOCK_OFF_LINE, "Ad blocking off", wanted=True
+        )
+
+    if cmd_lower in ["block ads", "enable ad blocking"]:
+        return _apply_config_line(
+            core, ADBLOCK_OFF_LINE, "Ad blocking on", wanted=False
+        )
 
     # --- Keystrokes ---
     request = mediakeys.parse_key_request(cmd_lower.split(), BARE_KEYS)

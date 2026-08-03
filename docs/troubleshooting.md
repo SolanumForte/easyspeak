@@ -101,6 +101,33 @@ navigation, which costs your scroll position. You'll hear "Reloading" and see:
 ↻ Reloading: page scripts don't survive a history navigation
 ```
 
+## Browser renders badly
+
+On some graphics drivers qutebrowser renders video sites wrong: text smears over
+itself, icons stutter, the player flickers or disappears. YouTube is the usual
+place to notice it.
+
+Say **"fix rendering"** in browser mode. That writes the line below to your
+qutebrowser config and restarts the browser:
+
+```python
+c.qt.args = ['disable-gpu-compositing']
+```
+
+Say **"restore rendering"** to put it back, or delete the line by hand.
+
+This turns off GPU compositing for qutebrowser only, so video decoding is a
+little more expensive. Leave it off unless you see the problem.
+
+## A site breaks with ad blocking on
+
+EasySpeak turns on element-level ad blocking when `python3-adblock` is installed,
+because ad overlays are numbered like anything else and steal hint numbers from
+the page underneath. Some sites detect it and break on purpose.
+
+Say **"allow ads"** in browser mode to turn blocking off and restart the browser,
+and **"block ads"** to turn it back on.
+
 ## Wake word not detecting
 
 - Check the microphone: `arecord -d 3 test.wav && aplay test.wav`

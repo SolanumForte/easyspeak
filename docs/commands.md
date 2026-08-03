@@ -84,6 +84,10 @@ Requires a webcam and additional dependencies — see [Installation](installatio
 | search [query] | Web search (DuckDuckGo) |
 | go to [url] | Navigate to URL |
 | open youtube | Open bookmark[^bookmarks] |
+| fix rendering | Switch the browser to software rendering[^rendering] |
+| restore rendering | Switch it back to hardware rendering |
+| allow ads | Turn ad blocking off[^adblock] |
+| block ads | Turn ad blocking back on |
 | enter | Press Enter (submit a form or search) |
 | press tab | Press Tab |
 | press escape | Press Escape in the page |
@@ -95,6 +99,18 @@ Requires a webcam and additional dependencies — see [Installation](installatio
     needed for link hints to appear as numbers. See
     [Troubleshooting](troubleshooting.md#browser-plugin-link-numbers-dont-work)
     if numbers don't show.
+
+[^rendering]:
+    Some graphics drivers render video sites badly under qutebrowser — smeared
+    text, stuttering icons, a player that flickers. This writes
+    `c.qt.args = ['disable-gpu-compositing']` to your qutebrowser config and
+    restarts the browser. Say "restore rendering" to undo it.
+
+[^adblock]:
+    Some sites detect element-level ad blocking and break on purpose. This writes
+    `c.content.blocking.enabled = False` and restarts the browser. Ad overlays
+    then take hint numbers away from the page underneath, so turn it back on when
+    you are done.
 
 [^bookmarks]:
     Built-in bookmarks: youtube, google, gmail, github, reddit, twitter,

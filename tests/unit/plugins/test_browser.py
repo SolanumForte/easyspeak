@@ -1857,3 +1857,78 @@ def test_browser_words_keep_their_own_meaning(mock_press, command, mock_core):
     browser.handle_browser_command(command, mock_core)
 
     assert not mock_press.called
+
+
+def test_software_rendering_adds_the_line(tmp_path, monkeypatch):
+    """Turning it on appends the qt.args line to config.py."""
+    monkeypatch.setattr(browser.Path, "home", lambda: tmp_path)
+
+    assert browser.set_config_line(browser.SOFTWARE_RENDERING_LINE, wanted=True) is True
+
+    cfg = tmp_path / ".config" / "qutebrowser" / "config.py"
+    assert browser.SOFTWARE_RENDERING_LINE in cfg.read_text()
+
+
+def test_software_rendering_removes_the_line(tmp_path, monkeypatch):
+    """Turning it off takes the line back out and leaves the rest alone."""
+    monkeypatch.setattr(browser.Path, "home", lambda: tmp_path)
+    cfg = tmp_path / ".config" / "qutebrowser" / "config.py"
+    cfg.parent.mkdir(parents=True)
+    cfg.write_text(f"c.hints.chars = '0123456789'\n{browser.SOFTWARE_RENDERING_LINE}\n")
+
+    assert (
+        browser.set_config_line(browser.SOFTWARE_RENDERING_LINE, wanted=False) is False
+    )
+
+    written = cfg.read_text()
+    assert browser.SOFTWARE_RENDERING_LINE not in written
+    assert "c.hints.chars" in written
+
+
+def test_software_rendering_is_not_added_twice(tmp_path, monkeypatch):
+    """Asking for it again replaces the line rather than appending another."""
+    monkeypatch.setattr(browser.Path, "home", lambda: tmp_path)
+
+    browser.set_config_line(browser.SOFTWARE_RENDERING_LINE, wanted=True)
+    browser.set_config_line(browser.SOFTWARE_RENDERING_LINE, wanted=True)
+
+    cfg = tmp_path / ".config" / "qutebrowser" / "config.py"
+    assert cfg.read_text().count(browser.SOFTWARE_RENDERING_LINE) == 1
+
+
+@patch.object(browser, "qb")
+@patch.object(browser, "set_config_line", return_value=True)
+def test_fix_rendering_restarts_the_browser(mock_set, mock_qb, mock_core):
+    """The setting only applies on a fresh qutebrowser process."""
+    assert browser.handle_browser_command("fix rendering", mock_core) is True
+    assert mock_set.call_args.args[0] == browser.SOFTWARE_RENDERING_LINE
+    assert mock_qb.call_args.args[0] == "restart"
+
+
+@patch.object(browser, "qb")
+@patch.object(browser, "set_config_line", return_value=None)
+def test_rendering_reports_an_unwritable_config(mock_set, mock_qb, mock_core):
+    """A read-only config is reported rather than silently ignored."""
+    browser.handle_browser_command("fix rendering", mock_core)
+
+    assert not mock_qb.called
+    assert "Could not write" in mock_core.speak.call_args.args[0]
+
+
+@pytest.mark.parametrize(
+    ["command", "wanted"],
+    [
+        ("allow ads", True),
+        ("stop blocking ads", True),
+        ("block ads", False),
+        ("enable ad blocking", False),
+    ],
+)
+@patch.object(browser, "qb")
+@patch.object(browser, "set_config_line", return_value=True)
+def test_adblock_toggle(mock_set, mock_qb, command, wanted, mock_core):
+    """Ad blocking can be turned off for sites that fight it, and back on."""
+    assert browser.handle_browser_command(command, mock_core) is True
+    assert mock_set.call_args.args[0] == browser.ADBLOCK_OFF_LINE
+    assert mock_set.call_args.kwargs["wanted"] is wanted
+    assert mock_qb.call_args.args[0] == "restart"

@@ -62,6 +62,13 @@
           piper-tts # TTS engine
           qutebrowser # browser plugin + "open browser" / help page
           sound-theme-freedesktop # /usr/share/sounds/freedesktop/...
+          wl-clipboard # wl-copy/wl-paste: dictation places text by pasting
+          wireplumber # wpctl: absolute volume levels
+          glib # gsettings for the AT-SPI bridge, gdbus for the Shell extension
+          dbus # dbus-send: MPRIS media player detection
+          pipewire # pw-play, preferred over paplay when present
+          xdg-utils # xdg-open: the files plugin
+          procps # pgrep/pkill: the browser and apps plugins
         ];
 
         # Native toolchain needed when uv compiles wheels from source

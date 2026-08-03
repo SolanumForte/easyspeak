@@ -676,20 +676,28 @@ def press_backspace(count):
 
 
 def _handle_delete(core, text):
-    """Run "backspace"/"scratch that" if that is what was said; True when it was."""
+    """Run "backspace"/"scratch that" if that is what was said; True when it was.
+
+    A backspace shortens what "scratch that" still has to remove rather than
+    discarding it, so the two can be used in either order on one utterance.
+    """
     words = text.split()
     count = _backspace_count(words)
-    if count is None and text in UNDO_PHRASES:
+    scratching = count is None and text in UNDO_PHRASES
+    if scratching:
         count = core.dictation_last_length
         if not count:
             core.speak("Nothing to scratch")
             return True
     if count is None:
         return False
-    if press_backspace(count):
+    if not press_backspace(count):
+        core.speak("Dictation isn't set up on this system.")
+        return True
+    if scratching:
         core.dictation_last_length = 0
     else:
-        core.speak("Dictation isn't set up on this system.")
+        core.dictation_last_length = max(core.dictation_last_length - count, 0)
     return True
 
 

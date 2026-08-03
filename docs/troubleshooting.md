@@ -111,7 +111,7 @@ Say **"fix rendering"** in browser mode. That writes the line below to your
 qutebrowser config and restarts the browser:
 
 ```python
-c.qt.args = ['disable-gpu-compositing']
+c.qt.args = ["disable-gpu-compositing"]
 ```
 
 Say **"restore rendering"** to put it back, or delete the line by hand.

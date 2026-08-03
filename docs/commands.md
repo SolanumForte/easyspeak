@@ -103,7 +103,7 @@ Requires a webcam and additional dependencies — see [Installation](installatio
 [^rendering]:
     Some graphics drivers render video sites badly under qutebrowser — smeared
     text, stuttering icons, a player that flickers. This writes
-    `c.qt.args = ['disable-gpu-compositing']` to your qutebrowser config and
+    `c.qt.args = ["disable-gpu-compositing"]` to your qutebrowser config and
     restarts the browser. Say "restore rendering" to undo it.
 
 [^adblock]:

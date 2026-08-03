@@ -174,3 +174,18 @@ def test_show_help_with_plugins_without_commands_attribute(mock_print, mock_core
         call.args[0] if call.args else "" for call in mock_print.call_args_list
     ]
     assert "\n=== Available Commands ===" in print_calls
+
+
+@pytest.mark.parametrize(
+    ["command", "expected"],
+    [
+        ("require wake word", True),
+        ("require the wake word", True),
+        ("free listening", False),
+        ("stop requiring wake word", False),
+    ],
+)
+def test_wake_word_requirement_toggle(command, expected, mock_core):
+    """The requirement can be turned on and off by voice, in any mode."""
+    assert zz_base.handle(command, mock_core) is True
+    assert mock_core.require_wake_word is expected

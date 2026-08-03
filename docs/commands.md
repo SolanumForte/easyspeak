@@ -223,6 +223,19 @@ Folders open in whatever file manager your desktop is configured for (via
 Volume changes are silent — GNOME's own on-screen display and chime acknowledge
 them.
 
+## Speakers playing audio
+
+Modes normally take a command on their own, with no wake word. That is faster, but
+a video playing through speakers reaches the microphone too, and its speech is
+transcribed like anything else.
+
+Say **"require wake word"** and modes stop accepting bare commands: say
+"Hey Jarvis, numbers" rather than "numbers". Page audio never says the wake word,
+so it can no longer trigger anything. Say **"free listening"** to go back.
+
+Set `EASYSPEAK_REQUIRE_WAKE_WORD=1` to start that way every time. Headphones or
+PipeWire echo cancellation solve the same problem at the audio level.
+
 ## Knowing which mode is listening
 
 Modes announce themselves, so you don't need a terminal to follow along:

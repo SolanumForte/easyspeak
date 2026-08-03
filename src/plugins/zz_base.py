@@ -5,6 +5,8 @@ DESCRIPTION = "Help and exit commands"
 
 COMMANDS = [
     "help - list all commands",
+    "require wake word - modes stop accepting bare commands",
+    "free listening - modes accept bare commands again",
     "quit/exit/goodbye - exit EasySpeak",
 ]
 
@@ -24,6 +26,16 @@ def handle(cmd, core):
     command is for another plugin.
     """
     cmd_lower = cmd.lower().strip()
+
+    if cmd_lower in ["require wake word", "require the wake word"]:
+        core.require_wake_word = True
+        core.speak("Modes now need the wake word.")
+        return True
+
+    if cmd_lower in ["free listening", "stop requiring wake word"]:
+        core.require_wake_word = False
+        core.speak("Modes now take commands on their own.")
+        return True
 
     # Exit - but NOT if it's "quit tracking" etc
     if "tracking" not in cmd_lower:

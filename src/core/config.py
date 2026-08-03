@@ -41,6 +41,11 @@ WAKE_WORD_SPOKEN = "Hey Jarvis"
 WAKE_THRESHOLD = 0.5
 WAKE_COOLDOWN = 3.0  # Seconds to ignore wake word after trigger
 
+# Modes normally accept a bare command. With this on they need the wake word too,
+# which keeps a speaker playing video from being transcribed as commands.
+_require_wake = os.environ.get("EASYSPEAK_REQUIRE_WAKE_WORD", "").strip().lower()
+REQUIRE_WAKE_WORD = _require_wake in {"1", "true", "yes", "on"}
+
 # --- Audio thresholds ---
 SILENCE_THRESHOLD = 300
 

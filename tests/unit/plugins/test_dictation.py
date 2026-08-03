@@ -1344,3 +1344,19 @@ def test_handle_delete_ignores_ordinary_speech(mock_press, mock_core):
     """Dictated words that are not a delete command fall through to insertion."""
     assert dictation._handle_delete(mock_core, "hello world") is False
     assert not mock_press.called
+
+
+@patch.object(dictation, "press_backspace", return_value=True)
+def test_backspace_shortens_what_scratch_that_removes(mock_press, mock_core):
+    """Backspacing part of an utterance leaves the rest still scratchable."""
+    mock_core.dictation_last_length = 13
+
+    dictation._handle_delete(mock_core, "backspace")
+    dictation._handle_delete(mock_core, "backspace")
+
+    assert mock_core.dictation_last_length == 11
+
+    dictation._handle_delete(mock_core, "scratch that")
+
+    assert mock_press.call_args.args[0] == 11
+    assert mock_core.dictation_last_length == 0

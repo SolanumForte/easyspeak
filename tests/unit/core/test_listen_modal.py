@@ -666,3 +666,37 @@ class TestWakeWordStripping:
         itself.
         """
         assert main.strip_wake_words(spoken) == spoken
+
+
+class TestRequireWakeWord:
+    """Modes can be told to accept only commands that carry the wake word."""
+
+    @pytest.mark.parametrize(
+        ["spoken", "expected"],
+        [
+            ("hey jarvis, numbers", True),
+            ("hey jarvis numbers", True),
+            ("jarvis, back", True),
+            ("Hey Jarvis", True),
+            ("numbers", False),
+            ("and now the weather forecast", False),
+        ],
+    )
+    def test_has_wake_prefix(self, spoken, expected):
+        """Only a leading wake word counts, so page audio cannot pass as a command."""
+        assert main.has_wake_prefix(spoken) is expected
+
+    def test_bare_commands_are_ignored_when_required(self, easy):
+        """With the flag on, an utterance without the wake word is not a command."""
+        easy.require_wake_word = True
+        drive(easy, [b"a", b"b"], ["scroll down", "hey jarvis, back"])
+
+        with clock():
+            assert list(easy.listen_modal("browser")) == ["back"]
+
+    def test_bare_commands_pass_by_default(self, easy):
+        """The flag is off by default, so modes still take a bare command."""
+        drive(easy, [b"a"], ["scroll down"])
+
+        with clock():
+            assert list(easy.listen_modal("browser")) == ["scroll down"]

@@ -226,7 +226,7 @@ def _setting_name(line):
     return match.group(1) if match else None
 
 
-SOFTWARE_RENDERING_LINE = "c.qt.args = ['disable-gpu-compositing']"
+SOFTWARE_RENDERING_LINE = 'c.qt.args = ["disable-gpu-compositing"]'
 
 ADBLOCK_OFF_LINE = "c.content.blocking.enabled = False"
 

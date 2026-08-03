@@ -23,6 +23,7 @@ from .config import (
     HOTKEY_COMBO,
     MAX_RECORD_SECONDS,
     MISUNDERSTAND_GRACE,
+    REQUIRE_WAKE_WORD,
     SILENCE_CALIBRATION_SECONDS,
     SILENCE_DURATION,
     SILENCE_NOISE_MARGIN,
@@ -57,6 +58,15 @@ WAKE_PREFIXES = (
     "jarvis",
     "jarvis,",
 )
+
+
+def has_wake_prefix(cmd):
+    """True when a spoken command starts with the wake word."""
+    cmd = cmd.lower().strip()
+    return any(
+        cmd == wake or (cmd.startswith(wake) and cmd[len(wake) :][:1] in " ,.!?")
+        for wake in WAKE_PREFIXES
+    )
 
 
 def strip_wake_words(cmd):
@@ -113,6 +123,7 @@ class EasySpeak:
         # modal mode, so the request survives the unwind back to the main loop.
         self.exit_requested = False
         self.last_misunderstand_time = 0
+        self.require_wake_word = REQUIRE_WAKE_WORD
         # Persistent text-to-speech pipeline (piper -> audio player) so the
         # voice model is loaded only once.
         self.speech = SpeechPipeline()
@@ -603,6 +614,10 @@ class EasySpeak:
             if not text:
                 # Noise, or an echo of our own prompt. Not a command, so the
                 # deadline stands.
+                continue
+
+            if self.require_wake_word and not has_wake_prefix(text):
+                logger.debug("  no wake word, ignoring: %s", text)
                 continue
 
             spoken = strip_wake_words(text)

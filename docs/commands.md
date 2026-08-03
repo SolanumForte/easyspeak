@@ -84,6 +84,10 @@ Requires a webcam and additional dependencies — see [Installation](installatio
 | search [query] | Web search (DuckDuckGo) |
 | go to [url] | Navigate to URL |
 | open youtube | Open bookmark[^bookmarks] |
+| enter | Press Enter (submit a form or search) |
+| press tab | Press Tab |
+| press escape | Press Escape in the page |
+| press down five | Press the Down arrow five times |
 | exit browser | Leave browser mode |
 
 [^hints]:
@@ -98,6 +102,9 @@ Requires a webcam and additional dependencies — see [Installation](installatio
 
 Commands may start with a filler word — "and scroll down", "so back" — which is
 stripped before matching, since Whisper adds them.
+
+Keystrokes need `press` in front here, apart from `enter`: `down`, `up`, `tab` and
+`escape` already mean something else in this mode.
 
 ## Dictation
 

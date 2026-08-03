@@ -6,7 +6,13 @@ import subprocess
 import time
 from pathlib import Path
 
+from easyspeak.core import mediakeys
+
 logger = logging.getLogger(__name__)
+
+# down, up, tab and escape already mean something in this mode, so every key but
+# enter needs the "press" prefix.
+BARE_KEYS = frozenset({"enter"})
 
 NAME = "browser"
 DESCRIPTION = "Qutebrowser voice control"
@@ -898,6 +904,13 @@ def handle_browser_command(cmd_lower, core):
     # --- Escape ---
     if cmd_lower in ["escape", "cancel", "nevermind"]:
         qb("fake-key <Escape>")
+        return True
+
+    # --- Keystrokes ---
+    request = mediakeys.parse_key_request(cmd_lower.split(), BARE_KEYS)
+    if request is not None:
+        if not mediakeys.press_key(*request):
+            core.speak("Keystrokes need GNOME.")
         return True
 
     # --- Bookmarks ---

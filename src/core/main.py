@@ -60,15 +60,6 @@ WAKE_PREFIXES = (
 )
 
 
-def has_wake_prefix(cmd):
-    """True when a spoken command starts with the wake word."""
-    cmd = cmd.lower().strip()
-    return any(
-        cmd == wake or (cmd.startswith(wake) and cmd[len(wake) :][:1] in " ,.!?")
-        for wake in WAKE_PREFIXES
-    )
-
-
 def strip_wake_words(cmd):
     """Remove a leading spoken wake word and surrounding punctuation.
 
@@ -600,6 +591,11 @@ class EasySpeak:
                 self.speak(f"Leaving {label}. Say {WAKE_WORD_SPOKEN} to continue.")
                 return
 
+            if self.require_wake_word and not self.wait_for_wake(
+                timeout=min(timeout, remaining)
+            ):
+                continue
+
             self.flush_stream()
             # Never wait past the deadline, so the mode ends on time even when the
             # room is quiet enough that every listen runs its full length.
@@ -616,10 +612,6 @@ class EasySpeak:
                 # deadline stands.
                 continue
 
-            if self.require_wake_word and not has_wake_prefix(text):
-                logger.debug("  no wake word, ignoring: %s", text)
-                continue
-
             spoken = strip_wake_words(text)
             if not spoken:
                 continue  # the wake word on its own is not a command
@@ -634,6 +626,28 @@ class EasySpeak:
                 deadline = time.monotonic() + idle_timeout
 
     # --- Main loop ---
+
+    def wait_for_wake(self, timeout):
+        """Block until the wake word is heard, then chime. False on timeout.
+
+        The same detector, cooldown and chime the main loop uses, so a mode that
+        asks for the wake word behaves exactly like the wake-word loop does.
+        """
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            pcm = self.stream.read(1280, exception_on_overflow=False)
+            score = self.wakeword.predict(pcm)
+            if score <= WAKE_THRESHOLD:
+                continue
+            now = time.time()
+            if now - self.last_wake_time < WAKE_COOLDOWN:
+                continue
+            self.last_wake_time = now
+            logger.info("🎤 Wake! (confidence: %.2f)", score)
+            self._reset_detector()
+            self._play_wake_chime()
+            return True
+        return False
 
     def _reset_detector(self):
         """Reset the wake detector and drop buffered mic audio.

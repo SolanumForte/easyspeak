@@ -121,13 +121,30 @@ first.
 | new line | Insert newline |
 | new paragraph | Insert double newline |
 | new sentence | Insert . and capitalize next |
-| backspace | Delete character |
 | space | Insert space |
-| tab | Insert tab |
 | at sign | Insert @ |
 | hashtag | Insert # |
 | percent | Insert % |
 | asterisk | Insert * |
+
+### Editing and keys
+
+These send real keystrokes rather than inserting text, so they work in browser
+fields and forms as well as editors. The arrows need `press` in front, since a
+bare "up" or "right" is ordinary dictated speech.
+
+| Command | Action |
+|---------|--------|
+| backspace | Delete one character |
+| backspace five | Delete five characters |
+| scratch that | Delete what the last utterance inserted |
+| enter | Press Enter |
+| tab | Press Tab |
+| escape | Press Escape |
+| page up | Press Page Up |
+| page down | Press Page Down |
+| press down | Press the Down arrow |
+| press down five | Press the Down arrow five times |
 
 ## Apps
 

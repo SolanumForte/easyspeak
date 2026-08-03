@@ -22,8 +22,9 @@ SILENCE_DURATION = 0.7
 COMMANDS = [
     "notes - start dictation mode (say 'stop notes' to end)",
     "Punctuation: comma, period, question mark, exclamation mark, colon, semicolon",
-    "Editing: backspace, backspace five, scratch that, space, tab",
-    "Structure: new sentence, new line, new paragraph, enter",
+    "Editing: backspace, backspace five, scratch that",
+    "Keys: enter, tab, escape, page up, page down, press down five",
+    "Structure: new sentence, new line, new paragraph",
     "Symbols: apostrophe, quote, dash, hyphen, at sign, hashtag, percent, asterisk",
 ]
 
@@ -33,7 +34,8 @@ core = None
 DICTATION_PROMPT = (
     "comma, period, new sentence, new paragraph, new line, question mark, "
     "exclamation mark, colon, semicolon, stop notes, backspace, scratch that, "
-    "space, tab, enter, apostrophe, quote, dash, hyphen, at sign, hashtag, percent"
+    "enter, tab, escape, space, apostrophe, quote, dash, hyphen, at sign, "
+    "hashtag, percent"
 )
 
 
@@ -130,6 +132,17 @@ KEYCODES = {
     "insert": 110,
     "v": 47,
     "backspace": 14,
+    "enter": 28,
+    "tab": 15,
+    "escape": 1,
+    "up": 103,
+    "down": 108,
+    "left": 105,
+    "right": 106,
+    "home": 102,
+    "end": 107,
+    "page up": 104,
+    "page down": 109,
 }
 
 DEFAULT_PASTE_CHORD = "ctrl+v"
@@ -548,7 +561,6 @@ def format_text(text):
     replacements = [
         # Editing commands
         (r"\s*\bspace\b\s*", " "),
-        (r"\s*\btab\b\s*", "\t"),
         # Sentence breaks - add space after
         (r"\s*,?\s*\bnew sentence\b\s*", ". "),
         (r"\s*,?\s*\bnext sentence\b\s*", ". "),
@@ -559,7 +571,6 @@ def format_text(text):
         (r"\s*,?\s*\bnewline\b\s*", "\n"),
         (r"\s*,?\s*\byou line\b\s*", "\n"),
         (r"\s*,?\s*\bline break\b\s*", "\n"),
-        (r"\s*,?\s*\benter\b\s*", "\n"),
         # Punctuation - include common mishearings
         (r"\s*,?\s*\bcomma\b\s*", ", "),
         (r"\s*,?\s*\bkarma\b\s*", ", "),
@@ -640,64 +651,92 @@ SPOKEN_COUNTS = {
     "ten": 10,
 }
 
-MAX_BACKSPACES = 200
+MAX_KEY_REPEATS = 200
 
 UNDO_PHRASES = frozenset({"scratch that", "scratch this", "undo that", "undo this"})
 
+KEY_ALIASES = {
+    "delete": "backspace",
+    "return": "enter",
+    "escape key": "escape",
+}
 
-def _backspace_count(words):
-    """Return how many characters "backspace ..." asks for, or None if it isn't that.
+# Bare "up" or "right" is ordinary speech, so the arrows need "press" in front.
+ARROW_KEYS = frozenset({"up", "down", "left", "right"})
 
-    A bare "backspace" is one; a trailing digit or number word is the count.
+
+def _key_request(words):
+    """Return (keycode, repeats) for a keystroke command, or None if it isn't one.
+
+    Accepts an optional "press" prefix, one- or two-word key names, and a trailing
+    count as digits or a number word.
     """
-    if not words or words[0] not in {"backspace", "delete"}:
+    if words and words[0] == "press":
+        words = words[1:]
+        explicit = True
+    else:
+        explicit = False
+    if not words:
         return None
-    if len(words) == 1:
-        return 1
-    if len(words) > 2:
-        return None
-    tail = words[1]
-    if tail.isdigit():
-        return min(int(tail), MAX_BACKSPACES)
-    return SPOKEN_COUNTS.get(tail)
+
+    for length in (2, 1):
+        name = " ".join(words[:length])
+        name = KEY_ALIASES.get(name, name)
+        if name not in KEYCODES or name in {"ctrl", "shift", "alt", "super", "v"}:
+            continue
+        if name in ARROW_KEYS and not explicit:
+            return None
+        tail = words[length:]
+        if not tail:
+            return KEYCODES[name], 1
+        if len(tail) > 1:
+            return None
+        count = int(tail[0]) if tail[0].isdigit() else SPOKEN_COUNTS.get(tail[0])
+        if count is None:
+            return None
+        return KEYCODES[name], min(count, MAX_KEY_REPEATS)
+    return None
 
 
-def press_backspace(count):
-    """Send `count` backspace keystrokes; True when they were delivered."""
+def press_key(keycode, repeats=1):
+    """Tap `keycode` `repeats` times; True when the keystrokes were delivered."""
     try:
         from easyspeak.core import mediakeys
 
-        for _ in range(count):
-            mediakeys.tap_chord([KEYCODES["backspace"]])
+        for _ in range(repeats):
+            mediakeys.tap_chord([keycode])
     except (ImportError, RuntimeError, OSError) as exc:
-        logger.warning("Backspace needs GNOME's RemoteDesktop interface: %s", exc)
+        logger.warning("Keystrokes need GNOME's RemoteDesktop interface: %s", exc)
         return False
     return True
 
 
-def _handle_delete(core, text):
-    """Run "backspace"/"scratch that" if that is what was said; True when it was.
+def _handle_keystroke(core, text):
+    """Run a keystroke command if that is what was said; True when it was.
 
     A backspace shortens what "scratch that" still has to remove rather than
     discarding it, so the two can be used in either order on one utterance.
     """
-    words = text.split()
-    count = _backspace_count(words)
-    scratching = count is None and text in UNDO_PHRASES
+    request = _key_request(text.split())
+    scratching = request is None and text in UNDO_PHRASES
     if scratching:
-        count = core.dictation_last_length
-        if not count:
+        pending = core.dictation_last_length
+        if not pending:
             core.speak("Nothing to scratch")
             return True
-    if count is None:
+        request = (KEYCODES["backspace"], pending)
+    if request is None:
         return False
-    if not press_backspace(count):
+    keycode, repeats = request
+    if not press_key(keycode, repeats):
         core.speak("Dictation isn't set up on this system.")
         return True
     if scratching:
         core.dictation_last_length = 0
+    elif keycode == KEYCODES["backspace"]:
+        core.dictation_last_length = max(core.dictation_last_length - repeats, 0)
     else:
-        core.dictation_last_length = max(core.dictation_last_length - count, 0)
+        core.dictation_last_length = 0
     return True
 
 
@@ -803,7 +842,7 @@ def _dictation_session(core):
             core.speak("Done")
             return True
 
-        if _handle_delete(core, text):
+        if _handle_keystroke(core, text):
             continue
 
         if _dictate_utterance(core, text):

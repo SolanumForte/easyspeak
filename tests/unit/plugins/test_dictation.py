@@ -146,14 +146,14 @@ def test_ensure_gnome_accessibility_oserror(mock_which, mock_run, readlog):
         ("hello newline world", "Hello\nworld"),
         ("hello you line world", "Hello\nworld"),
         ("hello line break world", "Hello\nworld"),
-        ("hello enter world", "Hello\nworld"),
+        ("hello enter world", "Hello enter world"),
         # Backspace is a keystroke command, not text: it must survive as words
         ("hello backspace world", "Hello backspace world"),
         ("hello delete world", "Hello delete world"),
         # Space command
         ("hello space world", "Hello world"),
-        # Tab command
-        ("hello tab world", "Hello\tworld"),
+        # Tab and enter are keystroke commands, not text
+        ("hello tab world", "Hello tab world"),
         # Dash and hyphen
         ("hello dash world", "Hello - world"),
         ("hello hyphen world", "Hello-world"),
@@ -1295,68 +1295,83 @@ def test_the_browser_is_handed_back_even_after_a_failure(mock_qb, mock_core_with
 @pytest.mark.parametrize(
     ["spoken", "expected"],
     [
-        ("backspace", 1),
-        ("delete", 1),
-        ("backspace five", 5),
-        ("backspace 5", 5),
-        ("delete three", 3),
-        ("backspace 999", dictation.MAX_BACKSPACES),
+        ("backspace", ("backspace", 1)),
+        ("delete", ("backspace", 1)),
+        ("backspace five", ("backspace", 5)),
+        ("backspace 5", ("backspace", 5)),
+        ("delete three", ("backspace", 3)),
+        ("backspace 999", ("backspace", dictation.MAX_KEY_REPEATS)),
+        ("enter", ("enter", 1)),
+        ("press enter", ("enter", 1)),
+        ("return", ("enter", 1)),
+        ("tab", ("tab", 1)),
+        ("escape", ("escape", 1)),
+        ("page down", ("page down", 1)),
+        ("press down five", ("down", 5)),
+        ("press left 3", ("left", 3)),
+        ("down", None),
+        ("right", None),
         ("backspace the file", None),
         ("hello world", None),
+        ("enter the room", None),
     ],
 )
-def test_backspace_count(spoken, expected):
-    """A bare backspace is one character; a trailing count asks for more."""
-    assert dictation._backspace_count(spoken.split()) == expected
+def test_key_request(spoken, expected):
+    """Key commands take an optional press prefix and an optional repeat count."""
+    request = dictation._key_request(spoken.split())
+    if expected is None:
+        assert request is None
+    else:
+        assert request == (dictation.KEYCODES[expected[0]], expected[1])
 
 
-@patch.object(dictation, "press_backspace", return_value=True)
+@patch.object(dictation, "press_key", return_value=True)
 def test_handle_delete_sends_the_requested_count(mock_press, mock_core):
     """ "backspace five" removes five characters."""
     mock_core.dictation_last_length = 13
 
-    assert dictation._handle_delete(mock_core, "backspace five") is True
-    assert mock_press.call_args.args[0] == 5
+    assert dictation._handle_keystroke(mock_core, "backspace five") is True
+    assert mock_press.call_args.args == (dictation.KEYCODES["backspace"], 5)
 
 
-@patch.object(dictation, "press_backspace", return_value=True)
+@patch.object(dictation, "press_key", return_value=True)
 def test_scratch_that_removes_the_last_insertion(mock_press, mock_core):
     """The undo phrase removes exactly what the previous utterance inserted."""
     mock_core.dictation_last_length = 13
 
-    assert dictation._handle_delete(mock_core, "scratch that") is True
-    assert mock_press.call_args.args[0] == 13
+    assert dictation._handle_keystroke(mock_core, "scratch that") is True
+    assert mock_press.call_args.args == (dictation.KEYCODES["backspace"], 13)
     assert mock_core.dictation_last_length == 0
 
 
-@patch.object(dictation, "press_backspace")
+@patch.object(dictation, "press_key")
 def test_scratch_that_with_nothing_inserted(mock_press, mock_core):
     """With no previous insertion the user is told, and no keys are sent."""
     mock_core.dictation_last_length = 0
 
-    assert dictation._handle_delete(mock_core, "scratch that") is True
+    assert dictation._handle_keystroke(mock_core, "scratch that") is True
     assert not mock_press.called
     assert mock_core.speak.call_args.args[0] == "Nothing to scratch"
 
 
-@patch.object(dictation, "press_backspace")
+@patch.object(dictation, "press_key")
 def test_handle_delete_ignores_ordinary_speech(mock_press, mock_core):
     """Dictated words that are not a delete command fall through to insertion."""
-    assert dictation._handle_delete(mock_core, "hello world") is False
+    assert dictation._handle_keystroke(mock_core, "hello world") is False
     assert not mock_press.called
 
 
-@patch.object(dictation, "press_backspace", return_value=True)
+@patch.object(dictation, "press_key", return_value=True)
 def test_backspace_shortens_what_scratch_that_removes(mock_press, mock_core):
     """Backspacing part of an utterance leaves the rest still scratchable."""
     mock_core.dictation_last_length = 13
 
-    dictation._handle_delete(mock_core, "backspace")
-    dictation._handle_delete(mock_core, "backspace")
+    dictation._handle_keystroke(mock_core, "backspace")
+    dictation._handle_keystroke(mock_core, "backspace")
 
     assert mock_core.dictation_last_length == 11
 
-    dictation._handle_delete(mock_core, "scratch that")
+    dictation._handle_keystroke(mock_core, "scratch that")
 
-    assert mock_press.call_args.args[0] == 11
+    assert mock_press.call_args.args == (dictation.KEYCODES["backspace"], 11)
     assert mock_core.dictation_last_length == 0

@@ -229,9 +229,10 @@ Modes normally take a command on their own, with no wake word. That is faster, b
 a video playing through speakers reaches the microphone too, and its speech is
 transcribed like anything else.
 
-Say **"require wake word"** and modes stop accepting bare commands: say
-"Hey Jarvis, numbers" rather than "numbers". Page audio never says the wake word,
-so it can no longer trigger anything. Say **"free listening"** to go back.
+Say **"require wake word"** and modes wait for the wake word before every
+command, exactly like the main loop: say "Hey Jarvis", wait for the chime, then
+say the command. Page audio never says the wake word, so it can no longer trigger
+anything. Say **"free listening"** to go back.
 
 Set `EASYSPEAK_REQUIRE_WAKE_WORD=1` to start that way every time. Headphones or
 PipeWire echo cancellation solve the same problem at the audio level.

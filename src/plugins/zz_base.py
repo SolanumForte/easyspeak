@@ -5,7 +5,7 @@ DESCRIPTION = "Help and exit commands"
 
 COMMANDS = [
     "help - list all commands",
-    "require wake word - modes stop accepting bare commands",
+    "require wake word - modes wait for the wake word each command",
     "free listening - modes accept bare commands again",
     "quit/exit/goodbye - exit EasySpeak",
 ]
@@ -29,7 +29,7 @@ def handle(cmd, core):
 
     if cmd_lower in ["require wake word", "require the wake word"]:
         core.require_wake_word = True
-        core.speak("Modes now need the wake word.")
+        core.speak("Modes now wait for the wake word.")
         return True
 
     if cmd_lower in ["free listening", "stop requiring wake word"]:

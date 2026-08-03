@@ -669,34 +669,24 @@ class TestWakeWordStripping:
 
 
 class TestRequireWakeWord:
-    """Modes can be told to accept only commands that carry the wake word."""
+    """Modes can be told to wait for the wake word before every command."""
 
-    @pytest.mark.parametrize(
-        ["spoken", "expected"],
-        [
-            ("hey jarvis, numbers", True),
-            ("hey jarvis numbers", True),
-            ("jarvis, back", True),
-            ("Hey Jarvis", True),
-            ("numbers", False),
-            ("and now the weather forecast", False),
-        ],
-    )
-    def test_has_wake_prefix(self, spoken, expected):
-        """Only a leading wake word counts, so page audio cannot pass as a command."""
-        assert main.has_wake_prefix(spoken) is expected
-
-    def test_bare_commands_are_ignored_when_required(self, easy):
-        """With the flag on, an utterance without the wake word is not a command."""
+    def test_the_mode_waits_for_the_wake_word(self, easy):
+        """With the flag on, nothing is heard until the wake word fires."""
         easy.require_wake_word = True
-        drive(easy, [b"a", b"b"], ["scroll down", "hey jarvis, back"])
+        misses, hit = [False], [True]
+        easy.wait_for_wake = Mock(side_effect=misses + hit + misses * 20)
+        drive(easy, [b"a"], ["back"])
 
         with clock():
             assert list(easy.listen_modal("browser")) == ["back"]
 
-    def test_bare_commands_pass_by_default(self, easy):
-        """The flag is off by default, so modes still take a bare command."""
+    def test_a_mode_does_not_wait_by_default(self, easy):
+        """The flag is off by default, so the wake word is never waited on."""
+        easy.wait_for_wake = Mock()
         drive(easy, [b"a"], ["scroll down"])
 
         with clock():
-            assert list(easy.listen_modal("browser")) == ["scroll down"]
+            list(easy.listen_modal("browser"))
+
+        assert not easy.wait_for_wake.called

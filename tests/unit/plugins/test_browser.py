@@ -3,6 +3,7 @@
 from unittest.mock import Mock, patch
 
 import pytest
+from easyspeak.core import mediakeys
 from easyspeak.plugins import browser
 
 # Tests for parse_hint_numbers function.
@@ -1830,3 +1831,29 @@ def test_page_state_belongs_to_the_session(
 
     assert "reload" not in [call.args[0] for call in mock_qb.call_args_list]
     assert first.browser_page_js_stale is True
+
+
+@pytest.mark.parametrize(
+    ["command", "key"],
+    [
+        ("enter", "enter"),
+        ("press enter", "enter"),
+        ("press tab", "tab"),
+        ("press escape", "escape"),
+        ("press down", "down"),
+    ],
+)
+@patch.object(mediakeys, "press_key", return_value=True)
+def test_browser_sends_keystrokes(mock_press, command, key, mock_core):
+    """Keystroke commands reach the page rather than qutebrowser's command line."""
+    assert browser.handle_browser_command(command, mock_core) is True
+    assert mock_press.call_args.args[0] == mediakeys.KEYS[key]
+
+
+@pytest.mark.parametrize("command", ["down", "up", "tab", "escape"])
+@patch.object(mediakeys, "press_key")
+def test_browser_words_keep_their_own_meaning(mock_press, command, mock_core):
+    """Words that already mean something in this mode are not treated as keys."""
+    browser.handle_browser_command(command, mock_core)
+
+    assert not mock_press.called

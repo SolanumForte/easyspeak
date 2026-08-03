@@ -11,6 +11,8 @@ import threading
 import time
 from pathlib import Path
 
+from easyspeak.core import mediakeys
+
 logger = logging.getLogger(__name__)
 
 NAME = "dictation"
@@ -131,18 +133,6 @@ KEYCODES = {
     "super": 125,
     "insert": 110,
     "v": 47,
-    "backspace": 14,
-    "enter": 28,
-    "tab": 15,
-    "escape": 1,
-    "up": 103,
-    "down": 108,
-    "left": 105,
-    "right": 106,
-    "home": 102,
-    "end": 107,
-    "page up": 104,
-    "page down": 109,
 }
 
 DEFAULT_PASTE_CHORD = "ctrl+v"
@@ -434,8 +424,6 @@ def insert_text(text):
     )
 
     try:
-        from easyspeak.core import mediakeys
-
         mediakeys.tap_chord(chord)
     except Exception:
         logger.warning(
@@ -638,77 +626,10 @@ def format_text(text):
     return text.strip()
 
 
-SPOKEN_COUNTS = {
-    "one": 1,
-    "two": 2,
-    "three": 3,
-    "four": 4,
-    "five": 5,
-    "six": 6,
-    "seven": 7,
-    "eight": 8,
-    "nine": 9,
-    "ten": 10,
-}
-
-MAX_KEY_REPEATS = 200
-
 UNDO_PHRASES = frozenset({"scratch that", "scratch this", "undo that", "undo this"})
 
-KEY_ALIASES = {
-    "delete": "backspace",
-    "return": "enter",
-    "escape key": "escape",
-}
-
 # Bare "up" or "right" is ordinary speech, so the arrows need "press" in front.
-ARROW_KEYS = frozenset({"up", "down", "left", "right"})
-
-
-def _key_request(words):
-    """Return (keycode, repeats) for a keystroke command, or None if it isn't one.
-
-    Accepts an optional "press" prefix, one- or two-word key names, and a trailing
-    count as digits or a number word.
-    """
-    if words and words[0] == "press":
-        words = words[1:]
-        explicit = True
-    else:
-        explicit = False
-    if not words:
-        return None
-
-    for length in (2, 1):
-        name = " ".join(words[:length])
-        name = KEY_ALIASES.get(name, name)
-        if name not in KEYCODES or name in {"ctrl", "shift", "alt", "super", "v"}:
-            continue
-        if name in ARROW_KEYS and not explicit:
-            return None
-        tail = words[length:]
-        if not tail:
-            return KEYCODES[name], 1
-        if len(tail) > 1:
-            return None
-        count = int(tail[0]) if tail[0].isdigit() else SPOKEN_COUNTS.get(tail[0])
-        if count is None:
-            return None
-        return KEYCODES[name], min(count, MAX_KEY_REPEATS)
-    return None
-
-
-def press_key(keycode, repeats=1):
-    """Tap `keycode` `repeats` times; True when the keystrokes were delivered."""
-    try:
-        from easyspeak.core import mediakeys
-
-        for _ in range(repeats):
-            mediakeys.tap_chord([keycode])
-    except (ImportError, RuntimeError, OSError) as exc:
-        logger.warning("Keystrokes need GNOME's RemoteDesktop interface: %s", exc)
-        return False
-    return True
+BARE_KEYS = frozenset(mediakeys.KEYS) - {"up", "down", "left", "right"}
 
 
 def _handle_keystroke(core, text):
@@ -717,23 +638,23 @@ def _handle_keystroke(core, text):
     A backspace shortens what "scratch that" still has to remove rather than
     discarding it, so the two can be used in either order on one utterance.
     """
-    request = _key_request(text.split())
+    request = mediakeys.parse_key_request(text.split(), BARE_KEYS)
     scratching = request is None and text in UNDO_PHRASES
     if scratching:
         pending = core.dictation_last_length
         if not pending:
             core.speak("Nothing to scratch")
             return True
-        request = (KEYCODES["backspace"], pending)
+        request = (mediakeys.KEYS["backspace"], pending)
     if request is None:
         return False
     keycode, repeats = request
-    if not press_key(keycode, repeats):
+    if not mediakeys.press_key(keycode, repeats):
         core.speak("Dictation isn't set up on this system.")
         return True
     if scratching:
         core.dictation_last_length = 0
-    elif keycode == KEYCODES["backspace"]:
+    elif keycode == mediakeys.KEYS["backspace"]:
         core.dictation_last_length = max(core.dictation_last_length - repeats, 0)
     else:
         core.dictation_last_length = 0

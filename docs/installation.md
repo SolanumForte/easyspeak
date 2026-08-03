@@ -35,6 +35,18 @@ the first launch so GNOME loads the bundled extension. See the
 [Packaging guide](packaging.md#install) for offline notes, more languages, and
 hold-to-dictate setup.
 
+## NixOS
+
+The flake carries the runtime tools, the Piper voice and the sound theme, so
+there is no system-package step:
+
+```bash
+nix run github:ctsdownloads/easyspeak
+```
+
+Log out and back in once after the first launch so GNOME loads the bundled
+Shell extension. See [Contributing](contributing.md#nixos) for the dev shell.
+
 ## Install from source
 
 For development, or to run the latest unreleased code, install from the repository.

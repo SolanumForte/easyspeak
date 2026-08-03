@@ -539,6 +539,7 @@ class EasySpeak:
         idle_timeout=30,
         max_record_seconds=None,
         silence_duration=None,
+        wake_gated=True,
     ):
         """Yield transcribed commands for a plugin's modal mode. Plugin-facing.
 
@@ -562,7 +563,9 @@ class EasySpeak:
         survives without a recognised command. `max_record_seconds` and
         `silence_duration` fall back to the command defaults when None; dictation
         passes larger values, since a sentence has pauses in it and runs longer
-        than a command.
+        than a command. `wake_gated` is False for modes that capture continuous
+        speech rather than commands, so `require_wake_word` does not ask for the
+        wake word before every dictated sentence.
 
         Yields each recognised command, lowercased and stripped of surrounding
         punctuation. The generator simply stops when the mode should end, so a
@@ -591,8 +594,10 @@ class EasySpeak:
                 self.speak(f"Leaving {label}. Say {WAKE_WORD_SPOKEN} to continue.")
                 return
 
-            if self.require_wake_word and not self.wait_for_wake(
-                timeout=min(timeout, remaining)
+            if (
+                wake_gated
+                and self.require_wake_word
+                and not self.wait_for_wake(timeout=min(timeout, remaining))
             ):
                 continue
 

@@ -138,22 +138,18 @@ addopts = "--ignore=tests/acceptance --ignore=tests/benchmarks --ignore=tests/in
 select = ["ALL"]
 ignore = [
   "COM812",  # missing-trailing-comma: formatter-owned; ruff warns if left enabled
+  "CPY001",  # no per-file copyright headers; the GPL-3.0 licence lives in LICENSE
   "ANN",     # type annotations not enforced project-wide; mypy covers used types
-  "S603",    # subprocess use is how a desktop voice controller works, by design
-  "S607",    # binaries (piper, wl-copy, ...) resolved via PATH for portability
+  "S603", "S607",  # PATH-resolved subprocess (piper, wl-copy, ...) is how the daemon works
   "PLC0415", # imports inside functions lazily load optional deps (cv2, ...)
-  "PLW0603", # module-level global state is part of the runtime/plugin design
-  "PLW0602", # ditto: globals declared for clarity even when only read
-  "C901",    # cyclomatic-complexity threshold not enforced
-  "PLR0911", "PLR0912", "PLR0913", "PLR0915",  # other complexity thresholds
+  "PLW0602", "PLW0603",  # module-level global state is part of the runtime/plugin design
+  "C901", "PLR0911", "PLR0912", "PLR0913", "PLR0915", "PLR0917",  # complexity thresholds not enforced
   "PLR2004", # magic-value comparisons read fine in audio/threshold code
   "N806",    # local UPPER_CASE names are deliberate in-function constants
   "BLE001",  # broad excepts keep the long-running voice daemon alive on purpose
   "PERF203", # per-iteration try/except is preferred over micro-optimising loops
   "PLW1510", # desktop commands are fire-and-forget; their exit code is non-fatal
-  "TRY003",  # inline exception messages are fine; no custom exception hierarchy
-  "TRY300",  # an explicit return inside try reads clearer than an else block here
-  "TRY301",  # raising inside try to trigger local cleanup is intentional
+  "TRY003", "TRY300", "TRY301",  # inline messages, return-in-try and raise-in-try all read fine
   "FBT002",  # the host_run(background=...) plugin convenience flag stays positional
 ]
 
@@ -172,15 +168,13 @@ ignore = [
   "SLF001",  # tests legitimately reach into private members
   "ARG",     # pytest fixtures are injected as (often unused) arguments
   "INP001",  # test packages need no __init__.py
-  "PLC0415", # local imports inside tests are fine
-  "PLW1510", # subprocess.run in tests need not pass check=
   "PT006", "PT007", "PT011", "PT018", "PT019",  # pytest style latitude in tests
   "S108",    # hardcoded /tmp paths are fine in tests
   "S310",    # url open in tests is controlled
   "E501",    # long lines (param tables, fixtures) tolerated in tests
   "ERA001",  # commented-out code tolerated in tests
   "TC003",   # no need to guard stdlib imports behind TYPE_CHECKING in tests
-  "EM101", "TRY003",  # inline exception messages fine in tests
+  "EM101",   # inline exception messages fine in tests
 ]
 
 [tool.ruff.lint.pydocstyle]

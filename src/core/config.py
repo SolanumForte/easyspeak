@@ -99,6 +99,7 @@ PIPER_BIN = os.environ.get("EASYSPEAK_PIPER_BIN") or _bundled_bin(
 WHISPER_MODEL = os.environ.get("EASYSPEAK_WHISPER_MODEL") or _bundled_model(
     "models", "whisper", "base.en", default="base.en"
 )
+WHISPER_LANG = os.environ.get("EASYSPEAK_WHISPER_LANG", "en")
 WHISPER_COMPUTE_TYPE = os.environ.get("EASYSPEAK_WHISPER_COMPUTE_TYPE", "int8")
 try:
     WHISPER_CPU_THREADS = max(

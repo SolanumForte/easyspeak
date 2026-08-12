@@ -36,6 +36,7 @@ from .config import (
     WHISPER_COMPUTE_TYPE,
     WHISPER_CPU_THREADS,
     WHISPER_MODEL,
+    WHISPER_LANG,
     load_whisper_model,
 )
 from .gnome_extension import ensure_extension
@@ -512,7 +513,7 @@ class EasySpeak:
             initial_prompt=use_prompt,
             beam_size=1,
             vad_filter=True,
-            language="en",
+            language=WHISPER_LANG,
             # Nothing here reads timestamps, and generating them costs tokens.
             without_timestamps=True,
             condition_on_previous_text=False,
@@ -783,9 +784,10 @@ class EasySpeak:
         self.wakeword = WakeWordModel()
 
         logger.info(
-            "Loading Whisper (%s, %s, cpu_threads=%s)...",
+            "Loading Whisper (%s, %s, language=%s, cpu_threads=%s)...",
             WHISPER_MODEL,
             WHISPER_COMPUTE_TYPE,
+            WHISPER_LANG,
             WHISPER_CPU_THREADS or "auto",
         )
         try:

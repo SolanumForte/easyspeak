@@ -75,7 +75,9 @@ yours joins them the same way.
   `False` to make the daemon exit, or `None` to pass the command on
 
 A plain module has neither `_` nor `vocab`: it speaks English and matches the
-words in its code. A package with a `locale/` directory has both.
+words in its code. A localized package binds `_` for what it says, and `vocab`
+as well if it listens for words of its own; the browser and grid modes, for
+example, have the first but not the second.
 
 ## Core methods you can use
 

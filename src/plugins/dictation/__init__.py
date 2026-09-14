@@ -571,7 +571,8 @@ def insert_via_atspi(text):
     that matches the real cause instead of always blaming focus.
     """
     python = atspi_python()
-    logger.info("⌨️  inserting %d chars via AT-SPI (%s)", len(text), python)
+    if len(text) > 0:
+        logger.info("⌨️  inserting %d chars via AT-SPI (%s)", len(text), python)
     if python is None:
         logger.warning(
             "Dictation needs PyGObject and the AT-SPI typelib, and no interpreter "

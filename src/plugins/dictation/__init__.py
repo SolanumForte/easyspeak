@@ -306,7 +306,7 @@ def paste_chord(wm_class=UNKNOWN):
     if wm_class is UNKNOWN:
         wm_class = focused_wm_class()
     chord = (
-        TERMINAL_PASTE_CHORD if wm_class in TERMINAL_WM_CLASSES else DEFAULT_PASTE_CHORD
+        TERMINAL_PASTE_CHORD if wm_class.lower() in TERMINAL_WM_CLASSES else DEFAULT_PASTE_CHORD
     )
     return [KEYCODES[part] for part in chord.split("+")]
 
